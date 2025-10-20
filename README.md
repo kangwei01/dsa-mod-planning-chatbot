@@ -76,6 +76,4 @@ For a detailed walkthrough of the notebook code, refer to
 
 ## License
 
-This project is provided for educational purposes as part of the NUS DSA module
-planning assistant coursework. Please review institutional guidelines before
-reusing it in other contexts.
+This project is provided for educational purposes as part of the NUS DSA4213 coursework in AY 25/26.

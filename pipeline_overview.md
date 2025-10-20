@@ -1,9 +1,6 @@
 # DSA Module Planning Assistant — Pipeline Overview
 
-This document explains the end-to-end flow implemented in `dsa_chatbot.ipynb`. It
-is written for developers who are onboarding to the project and need to
-understand how a user prompt travels through the system, which components are
-responsible for each step, and how to extend or debug the pipeline.
+This document explains in detail the end-to-end flow implemented in `dsa_chatbot.ipynb`.
 
 ---
 

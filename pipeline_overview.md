@@ -45,11 +45,12 @@ interpret the resulting payload.
 
 An Ollama-hosted Llama 3.1 model is instantiated via `ChatOllama`. The LangChain
 `bind_tools` method associates the tools above with the model, generating the
-function-call interface the agent uses. A tailored system prompt establishes the
-assistant's persona and directs it to rely exclusively on the tools for factual
-answers.
+function-call interface the agent uses. A strengthened system prompt now reminds
+the assistant to review prior turns, plan multi-step queries by breaking them
+into sub-tasks, and justify when external tools are unnecessary. This helps the
+LLM tackle complex, follow-up heavy questions more reliably.
 
-## 5. LangGraph Conversation Loop
+## 5. LangGraph Conversation Loop and Memory
 
 A two-node LangGraph state machine orchestrates each turn:
 
@@ -59,18 +60,29 @@ A two-node LangGraph state machine orchestrates each turn:
   results back as `ToolMessage` objects.
 
 Conditional edges (`tools_condition`) keep the loop running until the LLM
-responds with a final answer instead of another tool call.
+responds with a final answer instead of another tool call. The compiled graph is
+wrapped in LangChain's `RunnableWithMessageHistory`, backed by
+`InMemoryChatMessageHistory`, so every notebook session keeps a robust rolling
+memory without manual truncation logic.
 
-## 6. Notebook Chat Helpers
+## 6. Notebook Chat Helpers and Developer View
 
 Helper functions manage conversational state within the notebook environment:
 
 - `ask` adds a `HumanMessage`, streams the LangGraph trace (showing tool calls and
-  responses), and prints the latest assistant reply.
-- `reset_chat` clears the shared chat history so repeated experiments start fresh.
+  responses), and prints the latest assistant reply. Optional parameters allow
+  callers to select a session, disable streaming, or enable a `developer_view`
+  mode. When `developer_view=True`, the helper prints the conversation history,
+  the exact payload sent to the LLM, and any exposed reasoning metadata for
+  debugging.
+- `reset_chat` clears the stored history for a given session so repeated
+  experiments start fresh.
+- `get_session_history` exposes the underlying LangChain history object when
+  deeper inspection is required.
 
 These utilities demonstrate how the planning assistant can be exercised without
-building a separate UI.
+building a separate UI while still offering rich observability during
+development.
 
 ## 7. Example Interactions
 

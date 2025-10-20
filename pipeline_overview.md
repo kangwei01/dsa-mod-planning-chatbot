@@ -31,6 +31,9 @@ logic.
 Four LangChain tools wrap the client methods and expose LLM-friendly schemas:
 
 1. **`nusmods_module_overview`** — Fetches module metadata for general inquiries.
+   The payload now omits the verbose `semesterData` block to keep responses
+   lightweight; when semester-specific schedules are required the agent calls the
+   dedicated timetable tool instead.
 2. **`nusmods_module_prerequisites`** — Focuses on prerequisite and fulfilment
    relationships for eligibility checking.
 3. **`nusmods_module_timetable`** — Returns semester-level timetable structures
@@ -46,7 +49,9 @@ interpret the resulting payload.
 
 An Ollama-hosted `qwen3:14b` model is instantiated via `ChatOllama` with
 reasoning mode enabled and conservative decoding parameters for deterministic
-answers. The LangChain `bind_tools` method associates the tools above with the
+answers. The decoding limit has been relaxed by setting `num_predict=-1`, which
+allows the model to stream as many tokens as it needs for longer planning
+explanations. The LangChain `bind_tools` method associates the tools above with the
 model, generating the function-call interface the agent uses. A refreshed system
 prompt now:
 
@@ -76,9 +81,12 @@ responds with a final answer instead of another tool call.
 Helper functions manage conversational state within the notebook environment:
 
 - `ask` adds a `HumanMessage`, streams the LangGraph trace (showing tool calls and
-  responses), and prints the latest assistant reply. A `developer_view` toggle
-  can be enabled per turn to surface the exact messages shown to the LLM, its
-  tool-call metadata, and the stored chat history for easier debugging.
+  responses), and prints the latest assistant reply. When `developer_view=True`
+  the helper now prints a concise diagnostic package: the human prompt, the
+  message history given to the model, any reasoning text exposed via
+  `additional_kwargs`, the tool invocations, their outputs, and finally the LLM
+  answer. Outside of developer mode, tool payloads are suppressed so notebook
+  runs stay focused on the final reply.
 - `reset_chat` clears the shared chat history so repeated experiments start fresh.
 
 These utilities demonstrate how the planning assistant can be exercised without

@@ -30,7 +30,7 @@ logic.
 
 Four LangChain tools wrap the client methods and expose LLM-friendly schemas:
 
-1. **`nusmods_module_overview`** — Fetches module metadata for general inquiries.
+1. **`nusmods_module_overview`** — Fetches module metadata for general inquiries and now omits the verbose `semesterData` block. When semester-level lesson timings are required, the agent pivots to the timetable tool instead of relying on the overview payload.
 2. **`nusmods_module_prerequisites`** — Focuses on prerequisite and fulfilment
    relationships for eligibility checking.
 3. **`nusmods_module_timetable`** — Returns semester-level timetable structures
@@ -46,9 +46,10 @@ interpret the resulting payload.
 
 An Ollama-hosted `qwen3:14b` model is instantiated via `ChatOllama` with
 reasoning mode enabled and conservative decoding parameters for deterministic
-answers. The LangChain `bind_tools` method associates the tools above with the
-model, generating the function-call interface the agent uses. A refreshed system
-prompt now:
+answers. The `num_predict` cap is set to **-1**, giving the assistant access to
+the model's full token window for lengthy responses. The LangChain `bind_tools`
+method associates the tools above with the model, generating the
+function-call interface the agent uses. A refreshed system prompt now:
 
 - Emphasises multi-step planning, including breaking complex questions into
   sub-tasks and orchestrating multiple tool calls.
@@ -78,7 +79,9 @@ Helper functions manage conversational state within the notebook environment:
 - `ask` adds a `HumanMessage`, streams the LangGraph trace (showing tool calls and
   responses), and prints the latest assistant reply. A `developer_view` toggle
   can be enabled per turn to surface the exact messages shown to the LLM, its
-  tool-call metadata, and the stored chat history for easier debugging.
+  tool-call metadata, and the stored chat history for easier debugging. The
+  helper now retains only the five most recent turns and collapses each into a
+  user prompt plus the final model answer so the history stays compact.
 - `reset_chat` clears the shared chat history so repeated experiments start fresh.
 
 These utilities demonstrate how the planning assistant can be exercised without
@@ -88,9 +91,11 @@ building a separate UI.
 
 The final notebook cells provide sample prompts to validate the workflow:
 
-1. Module overview for `CS3244`.
-2. Timetable lookup for `ST3131` in Semester 1.
-3. Level-3000 module search focused on data-related keywords.
+1. Module overview for `CS3244`, executed with `developer_view=True` to surface
+   the full LangGraph trace.
+2. Timetable lookup for `ST3131` in Semester 1 with `developer_view=True`.
+3. Level-3000 module search focused on data-related keywords, again enabling the
+   developer diagnostics.
 
 Running the cells showcases the streaming trace and confirms the tools are wired
 correctly end-to-end.

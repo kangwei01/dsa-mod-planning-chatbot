@@ -14,7 +14,8 @@ planning assistant relies on.
 ## 2. NUSMods API Client
 
 `NusModsClient` encapsulates the REST calls to the public NUSMods v2 API. It
-provides:
+defaults to academic year **2025-2026** so the latest catalogue is used unless a
+caller overrides it, and provides:
 
 - `module` for module detail payloads.
 - `module_list` to cache the module catalogue for search.
@@ -43,11 +44,20 @@ interpret the resulting payload.
 
 ## 4. LLM Initialisation and Tool Binding
 
-An Ollama-hosted Llama 3.1 model is instantiated via `ChatOllama`. The LangChain
-`bind_tools` method associates the tools above with the model, generating the
-function-call interface the agent uses. A tailored system prompt establishes the
-assistant's persona and directs it to rely exclusively on the tools for factual
-answers.
+An Ollama-hosted `qwen3:14b` model is instantiated via `ChatOllama` with
+reasoning mode enabled and conservative decoding parameters for deterministic
+answers. The LangChain `bind_tools` method associates the tools above with the
+model, generating the function-call interface the agent uses. A refreshed system
+prompt now:
+
+- Emphasises multi-step planning, including breaking complex questions into
+  sub-tasks and orchestrating multiple tool calls.
+- Reminds the assistant to consult prior chat history before responding so
+  follow-up questions stay consistent.
+- Directs the assistant to ask the student for clarification when the request is
+  ambiguous or missing critical details before committing to a tool plan.
+- Reinforces guardrails to keep responses grounded in the tools and to redirect
+  off-topic queries.
 
 ## 5. LangGraph Conversation Loop
 
@@ -66,7 +76,9 @@ responds with a final answer instead of another tool call.
 Helper functions manage conversational state within the notebook environment:
 
 - `ask` adds a `HumanMessage`, streams the LangGraph trace (showing tool calls and
-  responses), and prints the latest assistant reply.
+  responses), and prints the latest assistant reply. A `developer_view` toggle
+  can be enabled per turn to surface the exact messages shown to the LLM, its
+  tool-call metadata, and the stored chat history for easier debugging.
 - `reset_chat` clears the shared chat history so repeated experiments start fresh.
 
 These utilities demonstrate how the planning assistant can be exercised without

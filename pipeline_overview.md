@@ -31,6 +31,7 @@ logic.
 Four LangChain tools wrap the client methods and expose LLM-friendly schemas:
 
 1. **`nusmods_module_overview`** — Fetches module metadata for general inquiries.
+   - The overview payload now omits the verbose `semesterData` list; use `nusmods_module_timetable` when semester scheduling details are required.
 2. **`nusmods_module_prerequisites`** — Focuses on prerequisite and fulfilment
    relationships for eligibility checking.
 3. **`nusmods_module_timetable`** — Returns semester-level timetable structures
@@ -45,8 +46,8 @@ interpret the resulting payload.
 ## 4. LLM Initialisation and Tool Binding
 
 An Ollama-hosted `qwen3:14b` model is instantiated via `ChatOllama` with
-reasoning mode enabled and conservative decoding parameters for deterministic
-answers. The LangChain `bind_tools` method associates the tools above with the
+reasoning mode enabled and `num_predict=-1` so lengthy answers are not truncated
+mid-response. The LangChain `bind_tools` method associates the tools above with the
 model, generating the function-call interface the agent uses. A refreshed system
 prompt now:
 
@@ -75,8 +76,10 @@ responds with a final answer instead of another tool call.
 
 Helper functions manage conversational state within the notebook environment:
 
-- `ask` adds a `HumanMessage`, streams the LangGraph trace (showing tool calls and
-  responses), and prints the latest assistant reply. A `developer_view` toggle
+- `condense_history` keeps only the two most recent turns verbatim while summarising older turns into human prompt, tool-call arguments, and final reply snippets so context tokens stay manageable.
+- Chat history is capped at five stored turns (`MAX_HISTORY = 5`) before trimming.
+
+- `ask` adds a `HumanMessage`, applies the condensed history view when invoking the model, streams the LangGraph trace (showing tool calls and responses), and prints the latest assistant reply. A `developer_view` toggle
   can be enabled per turn to surface the exact messages shown to the LLM, its
   tool-call metadata, and the stored chat history for easier debugging.
 - `reset_chat` clears the shared chat history so repeated experiments start fresh.

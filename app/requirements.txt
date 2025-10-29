@@ -1,0 +1,6 @@
+flask
+streamlit
+requests
+langchain-core
+langchain-ollama
+langgraph

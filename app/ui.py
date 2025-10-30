@@ -19,6 +19,52 @@ if "messages" not in st.session_state:
 if "developer_payload" not in st.session_state:
     st.session_state["developer_payload"] = []
 
+st.markdown(
+    """
+    <style>
+    .assistant-loading {
+        display: inline-flex;
+        gap: 0.35rem;
+        align-items: center;
+        padding: 0.1rem 0;
+    }
+    .assistant-loading .dot {
+        width: 0.35rem;
+        height: 0.35rem;
+        background-color: currentColor;
+        border-radius: 50%;
+        opacity: 0.25;
+        animation: assistant-loading-bounce 1.4s infinite ease-in-out;
+    }
+    .assistant-loading .dot:nth-child(2) {
+        animation-delay: 0.2s;
+    }
+    .assistant-loading .dot:nth-child(3) {
+        animation-delay: 0.4s;
+    }
+    @keyframes assistant-loading-bounce {
+        0%, 80%, 100% {
+            opacity: 0.25;
+            transform: scale(0.75);
+        }
+        40% {
+            opacity: 1;
+            transform: scale(1);
+        }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+ASSISTANT_LOADING_HTML = (
+    "<div class=\"assistant-loading\">"
+    "<span class=\"dot\"></span>"
+    "<span class=\"dot\"></span>"
+    "<span class=\"dot\"></span>"
+    "</div>"
+)
+
 def _merge_history(existing: list[dict[str, str]], new: list[dict[str, str]]) -> list[dict[str, str]]:
     """Combine truncated API history with the full UI history."""
 
@@ -70,22 +116,46 @@ user_prompt = st.chat_input(
 )
 
 if user_prompt and user_prompt.strip():
-    try:
-        response = requests.post(
-            CHAT_ENDPOINT,
-            json={"prompt": user_prompt, "developer_view": developer_view_enabled},
-            timeout=300,
-        )
-        response.raise_for_status()
-        data = response.json()
-        api_history = data.get("history", [])
-        st.session_state["messages"] = _merge_history(st.session_state.get("messages", []), api_history)
-        developer_info = data.get("developer_view")
-        if developer_info:
-            st.session_state["developer_payload"].append(developer_info)
-        st.rerun()
-    except requests.RequestException as exc:
-        st.error(f"Failed to contact the chatbot API: {exc}")
+    user_prompt = user_prompt.strip()
+    st.session_state["messages"].append({"role": "user", "content": user_prompt})
+    with st.chat_message("user", avatar=AVATARS["user"]):
+        st.markdown(user_prompt)
+
+    with st.chat_message("assistant", avatar=ASSISTANT_AVATAR):
+        message_placeholder = st.empty()
+        message_placeholder.markdown(ASSISTANT_LOADING_HTML, unsafe_allow_html=True)
+        try:
+            response = requests.post(
+                CHAT_ENDPOINT,
+                json={"prompt": user_prompt, "developer_view": developer_view_enabled},
+                timeout=300,
+            )
+            response.raise_for_status()
+            data = response.json()
+            api_history = data.get("history", [])
+            st.session_state["messages"] = _merge_history(
+                st.session_state.get("messages", []), api_history
+            )
+            developer_info = data.get("developer_view")
+            if developer_info:
+                st.session_state["developer_payload"].append(developer_info)
+
+            assistant_reply = ""
+            for message in reversed(st.session_state["messages"]):
+                if message.get("role") == "assistant":
+                    assistant_reply = message.get("content", "")
+                    break
+            if not assistant_reply:
+                assistant_reply = data.get("answer", "")
+            if assistant_reply:
+                message_placeholder.markdown(assistant_reply)
+            else:
+                message_placeholder.empty()
+        except requests.RequestException as exc:
+            error_message = f"Failed to contact the chatbot API: {exc}"
+            message_placeholder.markdown(error_message)
+            st.session_state["messages"].append({"role": "assistant", "content": error_message})
+
 
 if developer_view_enabled and st.session_state.get("developer_payload"):
     st.divider()

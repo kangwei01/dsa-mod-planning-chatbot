@@ -4,54 +4,206 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 from pathlib import Path
 from typing import Iterable, List
 
-from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from app.retrieval import get_embedding_model, get_vectors_path
 
-_ROOT = Path(__file__).resolve().parent.parent
-_DEFAULT_PDF_DIR = _ROOT / "data"
-_DEFAULT_JSON_PATH = _DEFAULT_PDF_DIR / "dsa_chs_requirements.json"
+_ROOT = Path(__file__).resolve().parent
+_DEFAULT_DATA_DIR = _ROOT / "data"
+_DEFAULT_MARKDOWN_PATH = _DEFAULT_DATA_DIR / "dsa_requirements.md"
+_DEFAULT_JSON_PATH = _DEFAULT_DATA_DIR / "dsa_chs_requirements.json"
+
+_HORIZONTAL_RULE_PATTERN = re.compile(r"^\s*-{3,}\s*$")
+_MAX_CHARS_PER_CHUNK = 1200
 
 
-def _load_pdf_documents(pdf_dir: Path) -> tuple[List[Document], int]:
-    """Load all PDF documents within *pdf_dir* using LangChain loaders."""
+def _is_table_block(text: str) -> bool:
+    """Return True if the block appears to be a markdown table."""
 
-    if not pdf_dir.exists():
-        raise FileNotFoundError(f"PDF directory '{pdf_dir}' does not exist.")
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return False
+    return all(line.startswith("|") for line in lines)
 
-    pdf_paths = sorted(pdf_dir.glob("*.pdf"))
-    if not pdf_paths:
-        raise FileNotFoundError(f"No PDF files found in '{pdf_dir}'.")
+
+def _split_plain_text(text: str, max_chars: int) -> List[str]:
+    """Split plain markdown text into chunks below max_chars."""
+
+    chunks: List[str] = []
+    remaining = text.strip()
+
+    while len(remaining) > max_chars:
+        split_idx = remaining.rfind("\n", 0, max_chars)
+        if split_idx == -1:
+            split_idx = remaining.rfind(" ", 0, max_chars)
+        if split_idx == -1:
+            split_idx = max_chars
+
+        chunk = remaining[:split_idx].rstrip()
+        if chunk:
+            chunks.append(chunk)
+        remaining = remaining[split_idx:].lstrip()
+
+    if remaining:
+        chunks.append(remaining)
+
+    return chunks
+
+
+def _split_section_into_blocks(section: str) -> List[str]:
+    """Break a markdown section into semantic blocks."""
+
+    blocks: List[str] = []
+    buffer: List[str] = []
+    table_mode = False
+
+    def flush_buffer() -> None:
+        nonlocal buffer, table_mode
+        if buffer:
+            block = "\n".join(buffer).strip()
+            if block:
+                blocks.append(block)
+        buffer = []
+        table_mode = False
+
+    for line in section.splitlines():
+        stripped = line.strip()
+
+        if stripped.startswith("|"):
+            if not table_mode:
+                flush_buffer()
+                table_mode = True
+            buffer.append(line)
+            continue
+
+        if table_mode and stripped == "":
+            buffer.append(line)
+            flush_buffer()
+            continue
+
+        if stripped == "":
+            buffer.append(line)
+            flush_buffer()
+            continue
+
+        if table_mode:
+            flush_buffer()
+
+        buffer.append(line)
+
+    flush_buffer()
+
+    return blocks
+
+
+def _split_section(section: str, max_chars: int) -> List[str]:
+    """Split a section into size-limited chunks while preserving tables."""
+
+    blocks = _split_section_into_blocks(section)
+    chunks: List[str] = []
+    current_parts: List[str] = []
+    current_length = 0
+
+    def flush_current() -> None:
+        nonlocal current_parts, current_length
+        if current_parts:
+            chunks.append("\n\n".join(current_parts).strip())
+        current_parts = []
+        current_length = 0
+
+    for block in blocks:
+        if _is_table_block(block):
+            flush_current()
+            chunks.append(block)
+            continue
+
+        pieces = _split_plain_text(block, max_chars) if len(block) > max_chars else [block]
+
+        for piece in pieces:
+            piece = piece.strip()
+            if not piece:
+                continue
+
+            candidate_length = len(piece) if not current_parts else current_length + 2 + len(piece)
+
+            if candidate_length <= max_chars:
+                current_parts.append(piece)
+                current_length = candidate_length
+                continue
+
+            flush_current()
+
+            if len(piece) <= max_chars:
+                current_parts.append(piece)
+                current_length = len(piece)
+            else:
+                chunks.append(piece)
+
+    flush_current()
+
+    return [chunk for chunk in chunks if chunk]
+
+
+def _split_handbook_sections(content: str) -> List[str]:
+    """Split handbook content on markdown horizontal rules."""
+
+    sections: List[str] = []
+    current: List[str] = []
+
+    for line in content.splitlines():
+        if _HORIZONTAL_RULE_PATTERN.match(line):
+            section = "\n".join(current).strip()
+            if section:
+                sections.append(section)
+            current = []
+        else:
+            current.append(line)
+
+    tail = "\n".join(current).strip()
+    if tail:
+        sections.append(tail)
+
+    return sections
+
+
+def _load_markdown_documents(handbook_path: Path) -> List[Document]:
+    """Load and chunk the handbook markdown while respecting context limits."""
+
+    if not handbook_path.exists():
+        raise FileNotFoundError(f"Handbook markdown '{handbook_path}' does not exist.")
+
+    content = handbook_path.read_text(encoding="utf-8")
+    sections = _split_handbook_sections(content)
+
+    if not sections:
+        raise ValueError(
+            "Handbook markdown must contain at least one section separated by a horizontal rule ('---')."
+        )
+
     documents: List[Document] = []
-    for path in pdf_paths:
-        loader = PyPDFLoader(str(path))
-        pages = loader.load()
-        for doc in pages:
-            doc.metadata.setdefault("source", path.name)
-        documents.extend(pages)
 
-    return documents, len(pdf_paths)
+    for section_index, section in enumerate(sections, start=1):
+        for chunk_index, chunk in enumerate(
+            _split_section(section, _MAX_CHARS_PER_CHUNK), start=1
+        ):
+            documents.append(
+                Document(
+                    page_content=chunk,
+                    metadata={
+                        "source": handbook_path.name,
+                        "section_index": section_index,
+                        "chunk_index": chunk_index,
+                    },
+                )
+            )
 
-
-def _split_documents(
-    documents: Iterable[Document], *, chunk_size: int, chunk_overlap: int
-) -> List[Document]:
-    """Split documents into smaller chunks compatible with embedding limits."""
-
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-        length_function=len,
-        separators=["\n\n", "\n", ".", " "],
-    )
-    return splitter.split_documents(list(documents))
+    return documents
 
 
 def _format_modules(modules: Iterable[dict]) -> str:
@@ -210,28 +362,16 @@ def _build_vector_store(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--pdf-dir",
+        "--handbook-path",
         type=Path,
-        default=_DEFAULT_PDF_DIR,
-        help="Directory containing source PDF handbooks (default: %(default)s).",
+        default=_DEFAULT_MARKDOWN_PATH,
+        help="Path to the handbook markdown file (default: %(default)s).",
     )
     parser.add_argument(
         "--json-path",
         type=Path,
         default=_DEFAULT_JSON_PATH,
         help="Path to the curriculum JSON file (default: %(default)s).",
-    )
-    parser.add_argument(
-        "--chunk-size",
-        type=int,
-        default=1000,
-        help="Chunk size in characters when splitting PDF content.",
-    )
-    parser.add_argument(
-        "--chunk-overlap",
-        type=int,
-        default=200,
-        help="Overlap between chunks in characters when splitting PDF content.",
     )
     parser.add_argument(
         "--output-dir",
@@ -250,26 +390,21 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    pdf_docs, pdf_file_count = _load_pdf_documents(args.pdf_dir)
-    pdf_chunks = _split_documents(
-        pdf_docs, chunk_size=args.chunk_size, chunk_overlap=args.chunk_overlap
-    )
-
+    handbook_docs = _load_markdown_documents(args.handbook_path)
     curriculum_docs = _load_curriculum_documents(args.json_path)
-    documents = pdf_chunks + curriculum_docs
+    documents = handbook_docs + curriculum_docs
 
     _build_vector_store(documents, output_dir=args.output_dir, overwrite=args.overwrite)
 
     print(
-        "Vector store built successfully with"
-        f" {len(pdf_docs)} PDF pages split into {len(pdf_chunks)} chunks,"
+        "Vector store built successfully with",
+        f" {len(handbook_docs)} handbook sections,",
         f" plus {len(curriculum_docs)} structured records."
     )
     print(
-        f"Processed {pdf_file_count} PDF files in '{args.pdf_dir}' and saved the index to"
+        f"Processed handbook markdown '{args.handbook_path}' and saved the index to",
         f" '{args.output_dir}'."
     )
-
 
 if __name__ == "__main__":
     main()

@@ -128,7 +128,7 @@ if user_prompt and user_prompt.strip():
             response = requests.post(
                 CHAT_ENDPOINT,
                 json={"prompt": user_prompt, "developer_view": developer_view_enabled},
-                timeout=300,
+                timeout=(10, 600),
             )
             response.raise_for_status()
             data = response.json()

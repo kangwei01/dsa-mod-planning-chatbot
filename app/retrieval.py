@@ -13,10 +13,10 @@ from langchain_ollama import OllamaEmbeddings
 from ollama import Client
 from ollama._types import ResponseError
 
-# Vector store artefacts live alongside the repository root (one level above the
-# ``app`` package). Keeping this relative path avoids hard-coding absolute
-# directories which simplifies deployment.
-_VECTORS_PATH = Path(__file__).resolve().parent.parent / "curriculum_info_vectors"
+# Vector store artefacts live within the ``app`` package so deployments can
+# treat the package as a self-contained module without relying on repository
+# relative paths.
+_VECTORS_PATH = Path(__file__).resolve().parent / "curriculum_info_vectors"
 _EMBED_MODEL = "mxbai-embed-large"
 
 
@@ -62,14 +62,27 @@ def _embedding() -> OllamaEmbeddings:
     return OllamaEmbeddings(model=_EMBED_MODEL)
 
 
+def get_embedding_model() -> OllamaEmbeddings:
+    """Expose the embedding model factory for tooling outside this module."""
+
+    return _embedding()
+
+
+def get_vectors_path() -> Path:
+    """Return the path where FAISS artefacts are stored."""
+
+    return _VECTORS_PATH
+
+
 @lru_cache(maxsize=1)
 def _vectorstore() -> FAISS:
     """Load the FAISS vector store built during development notebooks."""
 
     if not _VECTORS_PATH.exists():
         raise FileNotFoundError(
-            "curriculum_info_vectors directory is missing. Run the development "
-            "notebooks to generate the FAISS index before enabling retrieval."
+            "curriculum_info_vectors directory is missing. Run `python -m "
+            "app.build_vectors` to generate the FAISS index before enabling "
+            "retrieval."
         )
 
     embedding = _embedding()
@@ -116,4 +129,10 @@ def combine_context(documents: Sequence[Document] | None) -> str:
     return "\n\n".join(part for part in parts if part)
 
 
-__all__ = ["combine_context", "format_documents", "get_retriever"]
+__all__ = [
+    "combine_context",
+    "format_documents",
+    "get_embedding_model",
+    "get_retriever",
+    "get_vectors_path",
+]

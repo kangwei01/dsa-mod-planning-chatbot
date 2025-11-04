@@ -63,57 +63,144 @@ def _embed_batch(texts: Sequence[str]) -> np.ndarray:
     return matrix
 
 
-def _is_scalar(value: Any) -> bool:
-    """Return ``True`` if ``value`` is a scalar that can form a chunk leaf."""
+def _format_modules(modules: Iterable[Dict[str, Any]]) -> str:
+    """Create a readable listing of module codes and titles."""
 
-    if value is None:
-        return True
-    if isinstance(value, (str, int, float, bool)):
-        return True
-    if isinstance(value, list) and all(isinstance(item, (str, int, float, bool)) or item is None for item in value):
-        return True
-    return False
+    return ", ".join(f"{item['code']} ({item['title']})" for item in modules)
 
 
-def _format_scalar(value: Any) -> str:
-    """Convert scalar and near-scalar values into a readable string."""
-
-    if isinstance(value, list):
-        return ", ".join("" if item is None else str(item) for item in value)
-    if value is None:
-        return ""
-    return str(value)
-
-
-def _load_json_chunks(data: Any, path: Tuple[str, ...]) -> List[Tuple[str, Dict[str, Any]]]:
-    """Recursively flatten JSON data into path-aware text chunks."""
+def _load_common_core_chunks(common_core: Sequence[Dict[str, Any]]) -> List[Tuple[str, Dict[str, Any]]]:
+    """Generate textual chunks describing the CHS common core pillars."""
 
     chunks: List[Tuple[str, Dict[str, Any]]] = []
-    if isinstance(data, dict):
-        if data and all(_is_scalar(value) for value in data.values()):
-            lines = [" > ".join(path)]
-            lines.extend(f"{key}: {_format_scalar(value)}" for key, value in data.items())
-            chunks.append(("\n".join(lines), {"path": " > ".join(path)}))
+    for pillar in common_core:
+        pillar_name = pillar["pillar"]
+        if pillar_name == "Communities and Engagement":
+            for category in pillar["course_options"]:
+                category_name = category["category"]
+                for subcategory in category["subcategories"]:
+                    module_info = subcategory["courses"]
+                    modules_text = _format_modules(module_info)
+
+                    metadata = {
+                        "group": "CHS Common Core Modules",
+                        "pillar": pillar_name,
+                        "category": category_name,
+                    }
+                    if "gen-coded" in subcategory:
+                        content = (
+                            "Group: CHS Common Core Modules\n"
+                            f"Pillar Name: {pillar_name}\n"
+                            f"Category: {category_name}\n"
+                            f"Gen-Coded: {subcategory['gen-coded']}\n"
+                            f"Modules: {modules_text}"
+                        )
+                    elif "semester" in subcategory:
+                        content = (
+                            "Group: CHS Common Core Modules\n"
+                            f"Pillar Name: {pillar_name}\n"
+                            f"Category: {category_name}\n"
+                            f"Semester: {subcategory['semester']}\n"
+                            f"Modules: {modules_text}"
+                        )
+                    else:
+                        continue
+
+                    chunks.append((content, metadata))
         else:
-            for key, value in data.items():
-                chunks.extend(_load_json_chunks(value, path + (str(key),)))
-    elif isinstance(data, list):
-        if data and all(_is_scalar(item) for item in data):
-            text = f"{' > '.join(path)}: {_format_scalar(data)}"
-            chunks.append((text, {"path": " > ".join(path)}))
-        else:
-            for index, item in enumerate(data):
-                label = str(index)
-                if isinstance(item, dict):
-                    if "code" in item:
-                        label = str(item["code"])
-                    elif "title" in item:
-                        label = str(item["title"])
-                    elif "pillar" in item:
-                        label = str(item["pillar"])
-                chunks.extend(_load_json_chunks(item, path + (label,)))
-    else:
-        chunks.append((f"{' > '.join(path)}: {_format_scalar(data)}", {"path": " > ".join(path)}))
+            modules_text: List[str] = []
+            for module in pillar["course_options"]:
+                if "footnote" in module:
+                    modules_text.append(f"{module['code']} ({module['footnote']})")
+                else:
+                    modules_text.append(module["code"])
+
+            content = (
+                "Group: CHS Common Core Modules\n"
+                f"Pillar: {pillar_name}\n"
+                f"Modules: {', '.join(modules_text)}"
+            )
+            metadata = {
+                "group": "CHS Common Core Modules",
+                "pillar": pillar_name,
+            }
+            chunks.append((content, metadata))
+    return chunks
+
+
+def _load_integrated_chunks(integrated: Sequence[Dict[str, Any]]) -> List[Tuple[str, Dict[str, Any]]]:
+    """Generate textual chunks for integrated modules."""
+
+    chunks: List[Tuple[str, Dict[str, Any]]] = []
+    for pillar in integrated:
+        pillar_name = pillar["pillar"]
+        module_codes = ", ".join(mod["code"] for mod in pillar["course_options"])
+        content = (
+            "Group: CHS Integrated Modules\n"
+            f"Pillar: {pillar_name}\n"
+            f"Modules: {module_codes}"
+        )
+        metadata = {
+            "group": "CHS Integrated Modules",
+            "pillar": pillar_name,
+        }
+        chunks.append((content, metadata))
+    return chunks
+
+
+def _load_interdisciplinary_chunks(
+    interdisciplinary: Sequence[Dict[str, Any]]
+) -> List[Tuple[str, Dict[str, Any]]]:
+    """Generate textual chunks for interdisciplinary modules."""
+
+    chunks: List[Tuple[str, Dict[str, Any]]] = []
+    for pillar in interdisciplinary:
+        pillar_name = pillar["pillar"]
+        module_codes = ", ".join(mod["code"] for mod in pillar["course_options"])
+        content = (
+            "Group: CHS Interdisciplinary Modules\n"
+            f"Pillar: {pillar_name}\n"
+            f"Modules: {module_codes}"
+        )
+        metadata = {
+            "group": "CHS Interdisciplinary Modules",
+            "pillar": pillar_name,
+        }
+        chunks.append((content, metadata))
+    return chunks
+
+
+def _load_preallocation_chunks(year1_preallocation: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any]]]:
+    """Generate textual chunks for the Year 1 preallocation rules."""
+
+    chunks: List[Tuple[str, Dict[str, Any]]] = []
+    for student_group, allocation in year1_preallocation.items():
+        sem1_modules = ", ".join(allocation["semester_1"])
+        sem2_modules = ", ".join(allocation["semester_2"])
+        student_label = (
+            "Student ID ending with odd number"
+            if student_group == "student_id_ending_odd"
+            else "Student ID ending with even number"
+        )
+        content = (
+            f"CHS Allocated Student Group: {student_label}\n"
+            f"Semester 1 Modules: {sem1_modules}\n"
+            f"Semester 2 Modules {sem2_modules}"
+        )
+        metadata = {"group": "CHS Year 1 Preallocated Modules", "student_group": student_label}
+        chunks.append((content, metadata))
+    return chunks
+
+
+def _load_curriculum_chunks(raw: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any]]]:
+    """Mirror the CLI vector builder's chunking for CHS curriculum data."""
+
+    chs_curr = raw["chs_common_curriculum"]
+    chunks: List[Tuple[str, Dict[str, Any]]] = []
+    chunks.extend(_load_common_core_chunks(chs_curr["common_core"]))
+    chunks.extend(_load_integrated_chunks(chs_curr["integrated_courses"]))
+    chunks.extend(_load_interdisciplinary_chunks(chs_curr["interdisciplinary_courses"]))
+    chunks.extend(_load_preallocation_chunks(chs_curr["year1_preallocation"]))
     return chunks
 
 
@@ -123,8 +210,7 @@ def _load_chs_requirements() -> Tuple[List[str], List[Dict[str, Any]]]:
     with (DATA_DIR / "dsa_chs_requirements.json").open("r", encoding="utf-8") as file:
         raw = json.load(file)
 
-    base_path: Tuple[str, ...] = ("College of Humanities and Sciences Requirements",)
-    chunks = _load_json_chunks(raw, base_path)
+    chunks = _load_curriculum_chunks(raw)
     texts, metadatas = zip(*chunks) if chunks else ([], [])
     return list(texts), list(metadatas)
 
@@ -195,7 +281,26 @@ _MAJOR_TOP_K = 1
 
 @tool
 def chs_requirements_lookup(query: str) -> Dict[str, Any]:
-    """Retrieve College of Humanities and Sciences requirements context before using module APIs."""
+    """Search CHS curriculum rules before fetching live module data.
+
+    Args:
+        query: A natural-language question or keyword string describing the
+            College of Humanities and Sciences requirement to investigate (for
+            example, "What are the Communities and Engagement categories?").
+
+    Returns:
+        A dictionary with two keys:
+            ``query``: Echoes the input string so callers can correlate
+                responses.
+            ``matches``: A list of up to four retrieved documents. Each entry
+                contains ``content`` with the human-readable requirement text
+                and ``metadata`` detailing the pillar/category plus a ``score``
+                field indicating cosine similarity.
+
+    Use this tool when the assistant needs structured CHS requirement context
+    (common core, integrated, interdisciplinary, or preallocation rules)
+    before deciding which module-specific tools to call.
+    """
 
     results = _CHS_STORE.search(query, top_k=_CHS_TOP_K)
     return {"query": query, "matches": results}
@@ -203,7 +308,22 @@ def chs_requirements_lookup(query: str) -> Dict[str, Any]:
 
 @tool
 def dsa_major_requirements_lookup(query: str) -> Dict[str, Any]:
-    """Retrieve Data Science and Analytics major requirements context prior to calling module APIs."""
+    """Retrieve DSA major requirement snippets ahead of module lookups.
+
+    Args:
+        query: A natural-language question or keyword phrase describing the
+            Data Science and Analytics graduation rules the assistant should
+            inspect (such as "What is required for the capstone?").
+
+    Returns:
+        A dictionary shaped like ``{"query": query, "matches": [...]}``. The
+        ``matches`` list contains at most one document, where each entry holds
+        the plain-text requirement ``content`` and a ``metadata`` dictionary
+        with the originating section title, index, and similarity ``score``.
+
+    Use this tool when grounding answers that refer to faculty-provided DSA
+    major requirements prior to consulting external module information.
+    """
 
     results = _MAJOR_STORE.search(query, top_k=_MAJOR_TOP_K)
     return {"query": query, "matches": results}

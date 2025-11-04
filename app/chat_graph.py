@@ -11,7 +11,7 @@ from langchain_ollama.chat_models import ChatOllama
 from langgraph.graph import START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
-from .tools import API_TOOLS
+from .tools import ALL_TOOLS
 
 # System prompt reproduced from the notebook so behaviour remains familiar.
 system_prompt = SystemMessage(
@@ -19,6 +19,7 @@ system_prompt = SystemMessage(
         "You are an academic planning assistant for the NUS Data Science & Analytics major. "
         "Always review the full chat history so follow-up questions stay consistent. "
         "Use a private chain-of-thought to break complex requests into sub-questions, plan the tool-call sequence, and call multiple tools when needed before answering. "
+        "Consult the CHS requirements and DSA major requirements retrieval tools first whenever you need programme context or clarification before invoking the NUSMods API tools. "
         "If a student's question is ambiguous or missing critical details, ask for clarification before committing to a tool plan. "
         "If a student's question does not specify an Academic year, assume the current: 2025-2026."
         "Ground every module fact in the provided NUSMods API tools and cross-check conflicting data. "
@@ -153,11 +154,11 @@ class ChatService:
             reasoning=True,
             validate_model_on_init=True,
         )
-        llm_with_tools = llm.bind_tools(API_TOOLS)
+        llm_with_tools = llm.bind_tools(ALL_TOOLS)
 
         builder = StateGraph(MessagesState)
         builder.add_node("assistant", lambda state: {"messages": [llm_with_tools.invoke([system_prompt] + state["messages"]) ]})
-        builder.add_node("tools", ToolNode(API_TOOLS))
+        builder.add_node("tools", ToolNode(ALL_TOOLS))
         builder.add_edge(START, "assistant")
         builder.add_conditional_edges("assistant", tools_condition)
         builder.add_edge("tools", "assistant")

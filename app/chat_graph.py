@@ -6,12 +6,14 @@ import json
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional
 
+from langchain_core.documents import Document
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_ollama.chat_models import ChatOllama
 from langgraph.graph import START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
 from .tools import API_TOOLS
+from .retrieval import combine_context, format_documents, get_retriever
 
 # System prompt reproduced from the notebook so behaviour remains familiar.
 system_prompt = SystemMessage(
@@ -23,9 +25,17 @@ system_prompt = SystemMessage(
         "If a student's question does not specify an Academic year, assume the current: 2025-2026."
         "Ground every module fact in the provided NUSMods API tools and cross-check conflicting data. "
         "If a question falls outside academic planning, politely steer the student back to relevant topics. "
-        "If a module cannot be located, apologise and suggest verifying the code or academic year, and if the tools cannot answer, explain the limitation instead of guessing."
+        "If a module cannot be located, apologise and suggest verifying the code or academic year, and if the tools cannot answer, explain the limitation instead of guessing. "
+        "If external information have been retrieved, make use of those information."
     )
 )
+
+
+class ChatState(MessagesState):
+    """Extended LangGraph state that tracks retrieval decisions."""
+
+    retrieved_docs: Optional[List[Document]] = None
+    router_decision: Optional[str] = None
 
 
 def _trim(messages: Iterable[Any], max_history: int) -> List[Any]:
@@ -155,10 +165,85 @@ class ChatService:
         )
         llm_with_tools = llm.bind_tools(API_TOOLS)
 
-        builder = StateGraph(MessagesState)
-        builder.add_node("assistant", lambda state: {"messages": [llm_with_tools.invoke([system_prompt] + state["messages"]) ]})
+        retriever = get_retriever()
+
+        def retrieve_node(state: ChatState) -> Dict[str, Any]:
+            """Fetch supporting context before the assistant reasons."""
+
+            messages = state.get("messages", [])
+            if not messages:
+                return {"retrieved_docs": []}
+
+            query_msg = messages[-1]
+            query = getattr(query_msg, "content", "")
+            if not query:
+                return {"retrieved_docs": []}
+
+            docs = retriever.invoke(query)
+            return {"retrieved_docs": docs}
+
+        def assistant_node(state: ChatState) -> Dict[str, Any]:
+            """Invoke the LLM with optional retrieved context."""
+
+            history = list(state.get("messages", []))
+            if history and isinstance(history[-1], HumanMessage):
+                context = combine_context(state.get("retrieved_docs"))
+                if context:
+                    last_user = history[-1]
+                    history[-1] = HumanMessage(
+                        content=f"Context:\n{context}\n\nUser: {last_user.content}",
+                        additional_kwargs=getattr(last_user, "additional_kwargs", None) or {},
+                        response_metadata=getattr(last_user, "response_metadata", None) or {},
+                    )
+
+            reply = llm_with_tools.invoke([system_prompt] + history)
+            return {"messages": [reply]}
+
+        def router_node(state: ChatState) -> Dict[str, Any]:
+            """Decide whether an additional retrieval pass is required."""
+
+            messages = state.get("messages", [])
+            if not messages:
+                return {"router_decision": "assistant"}
+
+            query_msg = messages[-1]
+            query = getattr(query_msg, "content", "")
+            retrieved_texts = format_documents(state.get("retrieved_docs"))
+            router_prompt = f"""
+You are a routing agent helping a course-planning assistant.
+
+The user asked:
+"{query}"
+
+The assistant already has access to these retrieved documents:
+{retrieved_texts if retrieved_texts else "[No documents retrieved yet]"}
+
+Decide if more retrieval is needed to answer the question accurately.
+Respond with only one word:
+- "retrieve" → if additional or updated retrieval is necessary
+- "proceed" → if current context and retrieved_docs are sufficient
+"""
+
+            decision = llm.invoke([SystemMessage(content=router_prompt)]).content.strip().lower()
+            if "retrieve" in decision:
+                return {"router_decision": "retrieve_requirements"}
+            return {"router_decision": "assistant"}
+
+        builder = StateGraph(ChatState)
+        builder.add_node("router", router_node)
+        builder.add_node("retrieve_requirements", retrieve_node)
+        builder.add_node("assistant", assistant_node)
         builder.add_node("tools", ToolNode(API_TOOLS))
-        builder.add_edge(START, "assistant")
+        builder.add_edge(START, "router")
+        builder.add_conditional_edges(
+            "router",
+            lambda state: state.get("router_decision"),
+            {
+                "retrieve_requirements": "retrieve_requirements",
+                "assistant": "assistant",
+            },
+        )
+        builder.add_edge("retrieve_requirements", "assistant")
         builder.add_conditional_edges("assistant", tools_condition)
         builder.add_edge("tools", "assistant")
         return builder.compile()
@@ -182,7 +267,7 @@ class ChatService:
         final_state: Optional[Dict[str, Any]] = None
         stream_events: List[Dict[str, Any]] = []
         for state in self.graph.stream({"messages": history}, stream_mode="values"):
-            msgs = state["messages"]
+            msgs = state.get("messages", [])
             new_msgs = msgs[last_len:]
             if developer_view and new_msgs:
                 stream_events.extend(_serialise_message(msg) for msg in new_msgs)
@@ -200,6 +285,19 @@ class ChatService:
             assert developer_payload is not None
             developer_payload["stream_events"] = stream_events
             developer_payload["stored_state"] = [_serialise_message(msg) for msg in condensed]
+            if final_state is not None:
+                retrieved = final_state.get("retrieved_docs")
+                if retrieved:
+                    developer_payload["retrieved_docs"] = [
+                        {
+                            "content": doc.page_content,
+                            "metadata": doc.metadata,
+                        }
+                        for doc in retrieved
+                    ]
+                decision = final_state.get("router_decision")
+                if decision:
+                    developer_payload["router_decision"] = decision
 
         answer = ""
         for msg in reversed(self.chat_state["messages"]):

@@ -171,5 +171,14 @@ if developer_view_enabled and st.session_state.get("developer_payload"):
                 label = event.get("type", f"event {event_index}")
                 with st.expander(f"Event {event_index}: {label}", expanded=False):
                     st.json(event)
+        router_decision = payload.get("router_decision")
+        retrieved_docs = payload.get("retrieved_docs")
+        if router_decision or retrieved_docs:
+            st.markdown("Retrieval summary")
+            if router_decision:
+                st.write(f"Router decision: **{router_decision}**")
+            if retrieved_docs:
+                with st.expander("Retrieved documents", expanded=False):
+                    st.json(retrieved_docs)
         with st.expander("Stored chat state", expanded=False):
             st.json(payload.get("stored_state", []))

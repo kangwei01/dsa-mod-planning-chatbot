@@ -259,11 +259,10 @@ class _VectorStore:
             return []
         scores, indices = self.index.search(vector, min(top_k, len(self.texts)))
         results: List[Dict[str, Any]] = []
-        for score, idx in zip(scores[0], indices[0]):
+        for idx in indices[0]:
             if idx < 0 or idx >= len(self.texts):
                 continue
             metadata = dict(self.metadatas[idx])
-            metadata["score"] = float(score)
             results.append({
                 "content": self.texts[idx],
                 "metadata": metadata,
@@ -283,10 +282,13 @@ _MAJOR_TOP_K = 1
 def chs_requirements_lookup(query: str) -> Dict[str, Any]:
     """Search CHS curriculum rules before fetching live module data.
 
+    Input should be keyword phrases that require more context from the College
+    of Humanities and Sciences requirements collection.
+
     Args:
-        query: A natural-language question or keyword string describing the
-            College of Humanities and Sciences requirement to investigate (for
-            example, "What are the Communities and Engagement categories?").
+        query: A keyword phrase that requires more context about the College of
+            Humanities and Sciences requirements (for example, "Communities and
+            Engagement categories").
 
     Returns:
         A dictionary with two keys:
@@ -294,8 +296,8 @@ def chs_requirements_lookup(query: str) -> Dict[str, Any]:
                 responses.
             ``matches``: A list of up to four retrieved documents. Each entry
                 contains ``content`` with the human-readable requirement text
-                and ``metadata`` detailing the pillar/category plus a ``score``
-                field indicating cosine similarity.
+                and ``metadata`` detailing the pillar or category the excerpt
+                came from.
 
     Use this tool when the assistant needs structured CHS requirement context
     (common core, integrated, interdisciplinary, or preallocation rules)
@@ -310,16 +312,19 @@ def chs_requirements_lookup(query: str) -> Dict[str, Any]:
 def dsa_major_requirements_lookup(query: str) -> Dict[str, Any]:
     """Retrieve DSA major requirement snippets ahead of module lookups.
 
+    Input should be keyword phrases that require more context from the Data
+    Science and Analytics requirement handbook.
+
     Args:
-        query: A natural-language question or keyword phrase describing the
-            Data Science and Analytics graduation rules the assistant should
-            inspect (such as "What is required for the capstone?").
+        query: A keyword phrase that requires more context about the Data
+            Science and Analytics graduation rules (such as "capstone project"
+            or "advanced electives").
 
     Returns:
         A dictionary shaped like ``{"query": query, "matches": [...]}``. The
         ``matches`` list contains at most one document, where each entry holds
         the plain-text requirement ``content`` and a ``metadata`` dictionary
-        with the originating section title, index, and similarity ``score``.
+        with the originating section title and index.
 
     Use this tool when grounding answers that refer to faculty-provided DSA
     major requirements prior to consulting external module information.

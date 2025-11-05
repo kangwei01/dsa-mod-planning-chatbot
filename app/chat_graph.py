@@ -160,7 +160,7 @@ class ChatService:
             model="qwen3:14b",
             temperature=0.2,
             num_predict=-1,
-            reasoning=True,
+            reasoning=False,
             validate_model_on_init=True,
         )
         llm_with_tools = llm.bind_tools(API_TOOLS)

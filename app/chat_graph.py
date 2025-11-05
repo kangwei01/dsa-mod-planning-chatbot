@@ -212,16 +212,22 @@ class ChatService:
             router_prompt = f"""
 You are a routing agent helping a course-planning assistant.
 
-The user asked:
-"{query}"
+The user asked: "{query}"
 
 The assistant already has access to these retrieved documents:
 {retrieved_texts if retrieved_texts else "[No documents retrieved yet]"}
 
-Decide if more retrieval is needed to answer the question accurately.
-Respond with only one word:
-- "retrieve" → if additional or updated retrieval is necessary
-- "proceed" → if current context and retrieved_docs are sufficient
+DECIDE: Does the assistant need to retrieve more documents?
+
+Choose "retrieve" if:
+- Query asks about DSA major requirements, CHS curriculum, specializations, or graduation requirements
+- AND the retrieved documents do NOT contain the specific information needed to answer
+
+Choose "proceed" if:
+- The retrieved documents already contain sufficient information to answer the query
+- OR the query doesn't require academic requirement documents
+
+Respond with ONLY one word: "retrieve" or "proceed"
 """
 
             decision = llm.invoke([SystemMessage(content=router_prompt)]).content.strip().lower()

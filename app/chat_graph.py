@@ -36,6 +36,7 @@ class ChatState(MessagesState):
 
     retrieved_docs: Optional[List[Document]] = None
     router_decision: Optional[str] = None
+    router_query: Optional[str] = None
 
 
 def _trim(messages: Iterable[Any], max_history: int) -> List[Any]:
@@ -174,8 +175,10 @@ class ChatService:
             if not messages:
                 return {"retrieved_docs": []}
 
-            query_msg = messages[-1]
-            query = getattr(query_msg, "content", "")
+            query = state.get("router_query") or ""
+            if not query:
+                query_msg = messages[-1]
+                query = getattr(query_msg, "content", "")
             if not query:
                 return {"retrieved_docs": []}
 
@@ -204,7 +207,7 @@ class ChatService:
 
             messages = state.get("messages", [])
             if not messages:
-                return {"router_decision": "assistant"}
+                return {"router_decision": "assistant", "router_query": None}
 
             query_msg = messages[-1]
             query = getattr(query_msg, "content", "")
@@ -227,13 +230,28 @@ Choose "proceed" if:
 - The retrieved documents already contain sufficient information to answer the query
 - OR the query doesn't require academic requirement documents
 
-Respond with ONLY one word: "retrieve" or "proceed"
+If you choose "retrieve", ALSO craft a concise keyword-style search phrase (no more than 10 words) that best captures the user's intent for document retrieval.
+
+Respond in JSON with two keys:
+- "decision": either "retrieve" or "proceed"
+- "query": the keyword search phrase when decision is "retrieve", otherwise an empty string
 """
 
-            decision = llm.invoke([SystemMessage(content=router_prompt)]).content.strip().lower()
-            if "retrieve" in decision:
-                return {"router_decision": "retrieve_requirements"}
-            return {"router_decision": "assistant"}
+            router_reply = llm.invoke([SystemMessage(content=router_prompt)]).content
+            router_decision = "assistant"
+            router_query: Optional[str] = None
+            try:
+                parsed = json.loads(router_reply)
+                decision_value = str(parsed.get("decision", "")).strip().lower()
+                if decision_value == "retrieve":
+                    router_decision = "retrieve_requirements"
+                router_query = str(parsed.get("query", "")).strip() or None
+            except (json.JSONDecodeError, AttributeError):
+                decision_value = router_reply.strip().lower()
+                if "retrieve" in decision_value:
+                    router_decision = "retrieve_requirements"
+
+            return {"router_decision": router_decision, "router_query": router_query}
 
         builder = StateGraph(ChatState)
         builder.add_node("router", router_node)
@@ -304,6 +322,9 @@ Respond with ONLY one word: "retrieve" or "proceed"
                 decision = final_state.get("router_decision")
                 if decision:
                     developer_payload["router_decision"] = decision
+                router_query = final_state.get("router_query")
+                if router_query:
+                    developer_payload["router_query"] = router_query
 
         answer = ""
         for msg in reversed(self.chat_state["messages"]):

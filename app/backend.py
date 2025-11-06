@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import os
+
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 from flask import Flask, jsonify, request
 
 from .chat_graph import ChatService

@@ -9,10 +9,10 @@ logger = logging.getLogger("nusmods")
 # interact with nusmods api
 class NusModsClient:
     def __init__(self, default_acad_year = "2025-2026"):
-        self.default_acad_year = default_acad_year # academic year
-        self.session = requests.Session() # session so that connections can be reused
-        self.module_cache = {} # cache for module details
-        self.module_list_cache = {} # cache for module list
+        self.default_acad_year = default_acad_year  # academic year
+        self.session = requests.Session()  # session so that connections can be reused
+        self.module_cache = {}  # cache for module details
+        self.module_list_cache = {}  # cache for module list
 
     # get base url for that acad year
     def year_base(self, acad_year):
@@ -29,7 +29,7 @@ class NusModsClient:
             raise ValueError("module_code is required")
         # else return the normalized code
         return code
-    
+
     # get module details
     def module(self, module_code, acad_year = None):
         # clean up the module code
@@ -39,7 +39,7 @@ class NusModsClient:
         # create a cache key --> easier retrieval
         cache_key = f"{year}:{code}"
         # if not in cache
-        if cache_key not in self._module_cache:
+        if cache_key not in self.module_cache:
             # construct the url
             url = f"{self.year_base(year)}/modules/{code}.json"
             # log the api call
@@ -114,7 +114,21 @@ class NusModsClient:
         # if no semester specified, return all
         if semester is None:
             return semester_data
-        # else filter by semester
-        return [sem for sem in semester_data if sem.get("semester") == semester]
+        # normalise the semester input so "1" matches integer 1
+        semester_matches = []
+        try:
+            semester_int = int(semester)
+        except (TypeError, ValueError):
+            semester_int = None
+        for sem in semester_data:
+            sem_value = sem.get("semester")
+            if semester_int is not None:
+                # allow both integer and string representations of the semester
+                if sem_value == semester_int or sem_value == str(semester_int):
+                    semester_matches.append(sem)
+            elif sem_value == semester:
+                # fall back to direct comparison if conversion failed
+                semester_matches.append(sem)
+        return semester_matches
 
 client = NusModsClient()

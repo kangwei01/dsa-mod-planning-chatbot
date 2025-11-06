@@ -1,11 +1,11 @@
 from __future__ import annotations
-from typing import Any, Dict, List, Optional
 from langchain_core.tools import tool
 from .nusmods_client import client
 
 # this gives the information overview of a module
 @tool
 def nusmods_module_overview(module_code, acad_year = None):
+    """Return a summary of module metadata including description and credits."""
     # provide basic overview information about a module
     data = client.module(module_code, acad_year)
     return {
@@ -23,6 +23,7 @@ def nusmods_module_overview(module_code, acad_year = None):
 # get prereqs of module
 @tool
 def nusmods_module_prerequisites(module_code, acad_year = None):
+    """Return prerequisite-related metadata for a module."""
     data = client.module(module_code, acad_year)
     return {
         "moduleCode": data.get("moduleCode"),
@@ -37,6 +38,7 @@ def nusmods_module_prerequisites(module_code, acad_year = None):
 # get timetable of module
 @tool
 def nusmods_module_timetable(module_code, acad_year = None, semester = None, limit_lessons = 20):
+    """Return the timetable structure for a module with optional lesson limits."""
     semester_data = client.module_timetable(module_code, acad_year, semester)
     # shape data
     shaped = []
@@ -53,7 +55,7 @@ def nusmods_module_timetable(module_code, acad_year = None, semester = None, lim
         })
     # return the info
     return {
-        "moduleCode": client._normalise_code(module_code),
+        "moduleCode": client.normalise_code(module_code),
         "acadYear": acad_year or client.default_acad_year,
         "semesterData": shaped,
     }
@@ -61,6 +63,7 @@ def nusmods_module_timetable(module_code, acad_year = None, semester = None, lim
 # search for modules by keyword, level, etc.
 @tool
 def nusmods_module_search(query, acad_year = None, level = None, limit = 10):
+    """Search for modules that match the query and optional filters."""
     # use search modules from client
     matches = client.search_modules(query, acad_year, level=level, limit=limit)
     return {

@@ -5,7 +5,10 @@ from .nusmods_client import client
 # this gives the information overview of a module
 @tool
 def nusmods_module_overview(module_code, acad_year = None):
-    """Return a summary of module metadata including description and credits."""
+    """Retrieve the canonical module payload for course planning questions.
+
+    `acad_year`, when provided, should follow the YYYY-YYYY format (for example,
+    `2024-2025`)."""
     # provide basic overview information about a module
     data = client.module(module_code, acad_year)
     return {
@@ -23,7 +26,10 @@ def nusmods_module_overview(module_code, acad_year = None):
 # get prereqs of module
 @tool
 def nusmods_module_prerequisites(module_code, acad_year = None):
-    """Return prerequisite-related metadata for a module."""
+    """Surface prerequisite, preclusion, and fulfilment data for a module.
+
+    `acad_year`, when provided, should follow the YYYY-YYYY format (for example,
+    `2024-2025`)."""
     data = client.module(module_code, acad_year)
     return {
         "moduleCode": data.get("moduleCode"),
@@ -38,7 +44,10 @@ def nusmods_module_prerequisites(module_code, acad_year = None):
 # get timetable of module
 @tool
 def nusmods_module_timetable(module_code, acad_year = None, semester = None, limit_lessons = 20):
-    """Return the timetable structure for a module with optional lesson limits."""
+    """Summarise the module timetable across semesters and lesson groupings.
+
+    `acad_year`, when provided, should follow the YYYY-YYYY format (for example,
+    `2024-2025`) and `semester`, when provided, should be the integer `1` or `2`."""
     semester_data = client.module_timetable(module_code, acad_year, semester)
     # shape data
     shaped = []
@@ -63,7 +72,10 @@ def nusmods_module_timetable(module_code, acad_year = None, semester = None, lim
 # search for modules by keyword, level, etc.
 @tool
 def nusmods_module_search(query, acad_year = None, level = None, limit = 10):
-    """Search for modules that match the query and optional filters."""
+    """Locate modules by keyword, optionally filtered by level, for discovery tasks.
+
+    `acad_year`, when provided, should follow the YYYY-YYYY format (for example,
+    `2024-2025`)."""
     # use search modules from client
     matches = client.search_modules(query, acad_year, level=level, limit=limit)
     return {

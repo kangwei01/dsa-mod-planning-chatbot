@@ -12,23 +12,27 @@ from langchain_ollama.chat_models import ChatOllama
 from langgraph.graph import START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
-from .tools import API_TOOLS
 from .retrieval import combine_context, format_documents, get_retriever
+from .tools import API_TOOLS
 
 # System prompt reproduced from the notebook so behaviour remains familiar.
-system_prompt = SystemMessage(
-    content=(
-        "You are an academic planning assistant for the NUS Data Science & Analytics major. "
-        "Always review the full chat history so follow-up questions stay consistent. "
-        "Use a private chain-of-thought to break complex requests into sub-questions, plan the tool-call sequence, and call multiple tools when needed before answering. "
-        "If a student's question is ambiguous or missing critical details, ask for clarification before committing to a tool plan. "
-        "If a student's question does not specify an Academic year, assume the current: 2025-2026."
-        "Ground every module fact in the provided NUSMods API tools and cross-check conflicting data. "
-        "If a question falls outside academic planning, politely steer the student back to relevant topics. "
-        "If a module cannot be located, apologise and suggest verifying the code or academic year, and if the tools cannot answer, explain the limitation instead of guessing. "
-        "If external information have been retrieved, make use of those information."
-    )
+DEFAULT_SYSTEM_PROMPT_TEMPLATE = (
+    "You are an academic planning assistant for the NUS Data Science & Analytics major. "
+    "Always review the full chat history so follow-up questions stay consistent. "
+    "Use a private chain-of-thought to break complex requests into sub-questions, plan the tool-call sequence, and call multiple tools when needed before answering. "
+    "If a student's question is ambiguous or missing critical details, ask for clarification before committing to a tool plan. "
+    "If a student's question does not specify an Academic year, assume the current: 2025-2026."
+    "Ground every module fact in the provided NUSMods API tools and cross-check conflicting data. "
+    "If a question falls outside academic planning, politely steer the student back to relevant topics. "
+    "If a module cannot be located, apologise and suggest verifying the code or academic year, and if the tools cannot answer, explain the limitation instead of guessing. "
+    "If external information have been retrieved, make use of those information."
 )
+
+
+def _build_system_message(template: str) -> SystemMessage:
+    """Create the ``SystemMessage`` from the configured template string."""
+
+    return SystemMessage(content=template)
 
 
 class ChatState(MessagesState):
@@ -149,9 +153,81 @@ class ChatResponse:
 class ChatService:
     """Stateful service that mirrors the behaviour of the original notebook."""
 
-    def __init__(self, max_history: int = 5) -> None:
+    def __init__(
+        self,
+        max_history: int = 5,
+        system_prompt_template: str = DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+        reasoning_enabled: bool = False,
+        retriever_enabled: bool = True,
+    ) -> None:
         self.max_history = max_history
         self.chat_state: Dict[str, Any] = {"messages": []}
+        self.system_prompt_template = system_prompt_template
+        self.reasoning_enabled = reasoning_enabled
+        self.retriever_enabled = retriever_enabled
+        self._system_message = _build_system_message(self.system_prompt_template)
+        self.graph = self._build_graph()
+
+    def clone(
+        self,
+        *,
+        system_prompt_template: Optional[str] = None,
+        reasoning_enabled: Optional[bool] = None,
+        retriever_enabled: Optional[bool] = None,
+    ) -> "ChatService":
+        """Return a new :class:`ChatService` instance with matching configuration."""
+
+        return ChatService(
+            max_history=self.max_history,
+            system_prompt_template=(
+                system_prompt_template if system_prompt_template is not None else self.system_prompt_template
+            ),
+            reasoning_enabled=(
+                bool(reasoning_enabled)
+                if reasoning_enabled is not None
+                else self.reasoning_enabled
+            ),
+            retriever_enabled=(
+                bool(retriever_enabled)
+                if retriever_enabled is not None
+                else self.retriever_enabled
+            ),
+        )
+
+    def configure(
+        self,
+        *,
+        system_prompt_template: Optional[str] = None,
+        reasoning_enabled: Optional[bool] = None,
+        retriever_enabled: Optional[bool] = None,
+    ) -> None:
+        """Update runtime configuration used for ablation experiments."""
+
+        if system_prompt_template is not None:
+            candidate = system_prompt_template.strip()
+            new_template = (
+                system_prompt_template if candidate else self.system_prompt_template
+            )
+        else:
+            new_template = self.system_prompt_template
+        new_reasoning = (
+            self.reasoning_enabled if reasoning_enabled is None else bool(reasoning_enabled)
+        )
+        new_retriever = (
+            self.retriever_enabled if retriever_enabled is None else bool(retriever_enabled)
+        )
+
+        if (
+            new_template == self.system_prompt_template
+            and new_reasoning == self.reasoning_enabled
+            and new_retriever == self.retriever_enabled
+        ):
+            return
+
+        self.system_prompt_template = new_template
+        self.reasoning_enabled = new_reasoning
+        self.retriever_enabled = new_retriever
+        self._system_message = _build_system_message(self.system_prompt_template)
         self.graph = self._build_graph()
 
     def _build_graph(self):
@@ -161,15 +237,19 @@ class ChatService:
             model="qwen3:14b",
             temperature=0.2,
             num_predict=-1,
-            reasoning=False,
+            reasoning=self.reasoning_enabled,
             validate_model_on_init=True,
         )
         llm_with_tools = llm.bind_tools(API_TOOLS)
 
-        retriever = get_retriever()
+        retriever = get_retriever() if self.retriever_enabled else None
+        system_message = self._system_message
 
         def retrieve_node(state: ChatState) -> Dict[str, Any]:
             """Fetch supporting context before the assistant reasons."""
+
+            if retriever is None:
+                return {"retrieved_docs": []}
 
             messages = state.get("messages", [])
             if not messages:
@@ -189,7 +269,11 @@ class ChatService:
             """Invoke the LLM with optional retrieved context."""
 
             history = list(state.get("messages", []))
-            if history and isinstance(history[-1], HumanMessage):
+            if (
+                self.retriever_enabled
+                and history
+                and isinstance(history[-1], HumanMessage)
+            ):
                 context = combine_context(state.get("retrieved_docs"))
                 if context:
                     last_user = history[-1]
@@ -199,11 +283,14 @@ class ChatService:
                         response_metadata=getattr(last_user, "response_metadata", None) or {},
                     )
 
-            reply = llm_with_tools.invoke([system_prompt] + history)
+            reply = llm_with_tools.invoke([system_message] + history)
             return {"messages": [reply]}
 
         def router_node(state: ChatState) -> Dict[str, Any]:
             """Decide whether an additional retrieval pass is required."""
+
+            if not self.retriever_enabled:
+                return {"router_decision": "assistant", "router_query": None}
 
             messages = state.get("messages", [])
             if not messages:
@@ -284,7 +371,12 @@ Respond in JSON with two keys:
         developer_payload: Optional[Dict[str, Any]] = None
         if developer_view:
             developer_payload = {
-                "model_input": [_serialise_message(msg) for msg in [system_prompt] + history],
+                "model_input": [_serialise_message(msg) for msg in [self._system_message] + history],
+                "configuration": {
+                    "system_prompt_template": self.system_prompt_template,
+                    "reasoning_enabled": self.reasoning_enabled,
+                    "retriever_enabled": self.retriever_enabled,
+                },
             }
 
         last_len = len(history)
@@ -356,5 +448,26 @@ Respond in JSON with two keys:
 
         return ChatResponse(answer=answer, history=history_payload, developer_view=developer_payload)
 
+    def evaluate(
+        self,
+        prompts: Iterable[str],
+        *,
+        developer_view: bool = False,
+    ) -> List[ChatResponse]:
+        """Run each prompt as an isolated chat turn and return their responses."""
 
-__all__ = ["ChatResponse", "ChatService", "system_prompt"]
+        results: List[ChatResponse] = []
+        for prompt in prompts:
+            clean_prompt = (prompt or "").strip()
+            if not clean_prompt:
+                continue
+            self.reset()
+            results.append(self.ask(clean_prompt, developer_view=developer_view))
+        return results
+
+
+__all__ = [
+    "ChatResponse",
+    "ChatService",
+    "DEFAULT_SYSTEM_PROMPT_TEMPLATE",
+]

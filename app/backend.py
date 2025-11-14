@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
@@ -61,13 +62,24 @@ def chat():
     if not prompt:
         return jsonify({"error": "prompt is required"}), 400
 
+    start_time = time.perf_counter()
     response = chat_service.ask(prompt, developer_view=developer_view)
+    inference_duration = time.perf_counter() - start_time
     body = {
         "answer": response.answer,
         "history": response.history,
     }
+    body["response_time"] = inference_duration
     if response.developer_view is not None:
         body["developer_view"] = response.developer_view
+
+    if body.get("history"):
+        for message in reversed(body["history"]):
+            if message.get("role") == "assistant":
+                metadata = message.setdefault("metadata", {})
+                if isinstance(metadata, dict):
+                    metadata["response_time"] = inference_duration
+                break
 
     if ground_truth:
         grade_payload = grader_service.grade(

@@ -5,7 +5,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_ollama import OllamaEmbeddings
 
 # where the vectors are stored --> faster loading during runtime
-vector_path = Path(__file__).resolve().parent / "curriculum_info_vectors"
+vector_path = Path(__file__).resolve().parent / "all_requirements_vectors"
 # what model is used
 model = "mxbai-embed-large"
 

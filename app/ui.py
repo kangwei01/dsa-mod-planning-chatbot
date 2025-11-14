@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import csv
+import json
 import os
 import sys
 from pathlib import Path
@@ -244,6 +246,84 @@ EVALUATION_QUESTIONS = [
     },
 ]
 
+
+def _current_ablation_csv_name(*, reasoning_enabled: bool, retriever_enabled: bool) -> str:
+    """Return the CSV filename for the active ablation configuration."""
+
+    reasoning_flag = "reasoning_on" if reasoning_enabled else "reasoning_off"
+    retriever_flag = "retriever_on" if retriever_enabled else "retriever_off"
+    return f"{reasoning_flag}_{retriever_flag}.csv"
+
+
+def _serialise_reasoning_trace(value: object) -> str:
+    """Convert the grader reasoning trace into a CSV-friendly string."""
+
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except TypeError:
+            return str(value)
+    return str(value)
+
+
+def _write_evaluation_csv(
+    results: list[dict],
+    *,
+    reasoning_enabled: bool,
+    retriever_enabled: bool,
+) -> Path | None:
+    """Export evaluation outcomes to a configuration-specific CSV file."""
+
+    if not results:
+        return None
+
+    csv_path = Path(__file__).resolve().parent / _current_ablation_csv_name(
+        reasoning_enabled=reasoning_enabled,
+        retriever_enabled=retriever_enabled,
+    )
+
+    fieldnames = [
+        "question",
+        "assistant_response",
+        "response_time_seconds",
+        "ground_truth",
+        "grader_reasoning_trace",
+        "grader_accuracy",
+        "grader_relevance",
+        "grader_coherence",
+        "final_score",
+    ]
+
+    rows: list[dict[str, object]] = []
+    for item in results:
+        evaluation = item.get("evaluation") or {}
+        scores = evaluation.get("scores") or {}
+        rows.append(
+            {
+                "question": item.get("question", ""),
+                "assistant_response": item.get("answer", ""),
+                "response_time_seconds": item.get("response_time"),
+                "ground_truth": item.get("ground_truth", ""),
+                "grader_reasoning_trace": _serialise_reasoning_trace(
+                    evaluation.get("grader_reasoning")
+                ),
+                "grader_accuracy": scores.get("accuracy"),
+                "grader_relevance": scores.get("relevance"),
+                "grader_coherence": scores.get("coherence"),
+                "final_score": evaluation.get("total"),
+            }
+        )
+
+    with csv_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    return csv_path
+
+
 def _merge_history(existing: list[dict[str, str]], new: list[dict[str, str]]) -> list[dict[str, str]]:
     """Combine truncated API history with the full UI history."""
 
@@ -385,6 +465,10 @@ def _render_evaluation_result(result: dict, *, index: int, developer_view: bool)
     else:
         st.info("No response was returned by the assistant.")
 
+    response_time_value = result.get("response_time")
+    if response_time_value is not None:
+        st.caption(f"Response time: {response_time_value:.2f}s")
+
     ground_truth = result.get("ground_truth")
     if ground_truth:
         with st.expander("Ground truth reference", expanded=False):
@@ -489,6 +573,10 @@ with chat_tab:
             evaluation_meta = metadata.get("evaluation") if isinstance(metadata, dict) else None
             if evaluation_meta:
                 _render_evaluation(evaluation_meta)
+            if role == "assistant" and isinstance(metadata, dict):
+                response_time_value = metadata.get("response_time")
+                if response_time_value is not None:
+                    st.caption(f"Response time: {response_time_value:.2f}s")
 
     user_prompt = st.chat_input(
         placeholder="e.g. What is the timetable for DSA4213 in semester 1?",
@@ -539,6 +627,13 @@ with chat_tab:
                     message_placeholder.markdown(assistant_reply)
                 else:
                     message_placeholder.empty()
+                response_time_value = data.get("response_time")
+                if last_assistant_message and response_time_value is not None:
+                    metadata = last_assistant_message.setdefault("metadata", {})
+                    if isinstance(metadata, dict):
+                        metadata["response_time"] = response_time_value
+                if response_time_value is not None:
+                    st.caption(f"Response time: {response_time_value:.2f}s")
                 if last_assistant_message:
                     metadata = last_assistant_message.get("metadata") or {}
                     evaluation_meta = metadata.get("evaluation") if isinstance(metadata, dict) else None
@@ -615,6 +710,7 @@ with evaluation_tab:
                         response.raise_for_status()
                         data = response.json()
                         result_entry["answer"] = data.get("answer", "")
+                        result_entry["response_time"] = data.get("response_time")
                         result_entry["evaluation"] = data.get("evaluation") or {}
                         developer_info = data.get("developer_view")
                         if developer_info:
@@ -640,7 +736,23 @@ with evaluation_tab:
                         developer_view=developer_view_enabled,
                     )
 
-            status_placeholder.success("Evaluation suite completed.")
+            try:
+                csv_path = _write_evaluation_csv(
+                    st.session_state["evaluation_results"],
+                    reasoning_enabled=st.session_state["ablation_reasoning_enabled"],
+                    retriever_enabled=st.session_state["ablation_retriever_enabled"],
+                )
+            except OSError as exc:
+                status_placeholder.warning(
+                    f"Evaluation suite completed but could not write CSV: {exc}"
+                )
+            else:
+                if csv_path is not None:
+                    status_placeholder.success(
+                        f"Evaluation suite completed. Results saved to {csv_path.name}."
+                    )
+                else:
+                    status_placeholder.success("Evaluation suite completed.")
         finally:
             st.session_state["evaluation_running"] = False
             progress_bar.progress(1.0)

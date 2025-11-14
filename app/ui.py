@@ -35,6 +35,12 @@ if "ablation_retriever_enabled" not in st.session_state:
     st.session_state["ablation_retriever_enabled"] = True
 if "ground_truth_text" not in st.session_state:
     st.session_state["ground_truth_text"] = ""
+if "evaluation_results" not in st.session_state:
+    st.session_state["evaluation_results"] = []
+if "evaluation_running" not in st.session_state:
+    st.session_state["evaluation_running"] = False
+if "evaluation_timeouts" not in st.session_state:
+    st.session_state["evaluation_timeouts"] = []
 
 st.markdown(
     """
@@ -81,6 +87,162 @@ ASSISTANT_LOADING_HTML = (
     "<span class=\"dot\"></span>"
     "</div>"
 )
+
+EVALUATION_QUESTIONS = [
+    {
+        "id": 1,
+        "question": "List all the Level 2000 core modules for the DSA major.",
+        "ground_truth": (
+            "Must include: CS2040, DSA2101, DSA2102, MA2001, MA2002, MA2311, ST2131, "
+            "ST2132; Total Units = 32 MCs."
+        ),
+    },
+    {
+        "id": 2,
+        "question": "What are the Level 3000 modules I need to take for DSA?",
+        "ground_truth": "Must include: CS3244, DSA3101, DSA3102, ST3131; Total Units = 16 MCs.",
+    },
+    {
+        "id": 3,
+        "question": "Do I have to do a specialisation in DSA to graduate?",
+        "ground_truth": (
+            "No, specialisations are optional. Must reference Operations Research and Statistical "
+            "Methodology."
+        ),
+    },
+    {
+        "id": 4,
+        "question": "How many MCs do I need to graduate from the DSA programme?",
+        "ground_truth": (
+            "60 units for major requirements, within the total CHS framework (~160 MCs including CHS). "
+            "Must include Level 1000–4000 breakdown."
+        ),
+    },
+    {
+        "id": 5,
+        "question": "Explain the difference between Option A and Option B in Level 4000 requirements.",
+        "ground_truth": (
+            "Must mention Option A, Option B, Honours Project; Explain that Option A = 2 modules and "
+            "Option B = Honours Project (DSA4288 variant)."
+        ),
+    },
+    {
+        "id": 6,
+        "question": "What modules are in the Operations Research specialisation?",
+        "ground_truth": (
+            "Must include: MA3252, MA3238, MA4260, MA4270, DSA4288M; Total Units = 20 MCs."
+        ),
+    },
+    {
+        "id": 7,
+        "question": "List the Statistical Methodology specialisation modules.",
+        "ground_truth": (
+            "Must include: ST3232, ST3248, ST4231, ST4234, ST4253, DSA4288S"
+        ),
+    },
+    {
+        "id": 8,
+        "question": "What are the CHS Common Curriculum pillars?",
+        "ground_truth": (
+            "Must include: Data Literacy, Communities and Engagement, Artificial Intelligence, Design "
+            "Thinking, Digital Literacy, Writing."
+        ),
+    },
+    {
+        "id": 9,
+        "question": "Give examples of Communities and Engagement courses I can take.",
+        "ground_truth": (
+            "Must minimally include: GEN2061X, GEN2061Y, CLC1101, CLC2204; Note that they are "
+            "service-learning or project-based."
+        ),
+    },
+    {
+        "id": 10,
+        "question": "Which CHS pillar does DSA1101 fulfil?",
+        "ground_truth": "It fulfils the Data Literacy pillar.",
+    },
+    {
+        "id": 11,
+        "question": "Which semester should I take Communities and Engagement modules?",
+        "ground_truth": (
+            "Semester 1: Modules such as GEN2050X (Teach SG), GEN2060X (Reconnect SeniorsSG), "
+            "GEN2061X (Support Healthy AgeingSG), GEN2062X (Community Activities for Seniors with SG "
+            "Cares), and GEN2070X (Community Link (Comlink) Befrienders) are offered in Semester 1.\n"
+            "Semester 2: Modules such as GEN2050Y (Teach SG), GEN2060Y (Reconnect SeniorsSG), GEN2061Y "
+            "(Support Healthy AgeingSG), GEN2062Y (Community Activities for Seniors with SG Cares), and "
+            "GEN2070Y (Community Link (Comlink) Befrienders) are offered in Semester 2."
+        ),
+    },
+    {
+        "id": 12,
+        "question": "When can I take the Interdisciplinary CHS courses?",
+        "ground_truth": "Recommended Years 3 and 4",
+    },
+    {
+        "id": 13,
+        "question": (
+            "I’m a year 2 DSA student who has taken DSA1101 and MA2001 — what modules do you suggest I take "
+            "next in Semester 1 to fulfil a 20 MC workload?"
+        ),
+        "ground_truth": (
+            "Must suggest 5 from this list: CS2040, DSA2101, DSA2102, MA2311, ST2131, ST2132 or MA2002; "
+            "Total ≈ 20 MCs."
+        ),
+    },
+    {
+        "id": 14,
+        "question": "What modules should I take next semester?",
+        "ground_truth": (
+            "Should ask clarifying questions about AY, completed modules, and interests instead of guessing."
+        ),
+    },
+    {
+        "id": 15,
+        "question": "Book a Grab ride to NUS for me.",
+        "ground_truth": "Politely refuse and redirect to academic planning topics.",
+    },
+    {
+        "id": 16,
+        "question": "What are the prerequisites for XYZ9999?",
+        "ground_truth": (
+            "Apologise and explain module not found; suggest verifying code or AY; do not hallucinate."
+        ),
+    },
+    {
+        "id": 17,
+        "question": "What is the timetable for DSA4213?",
+        "ground_truth": "Should default to the current AY 25/26",
+    },
+    {
+        "id": 18,
+        "question": "What’s the weather in Singapore like?",
+        "ground_truth": "Politely refuse and redirect to academic planning topics.",
+    },
+    {
+        "id": 19,
+        "question": "What are the prerequisites for DSA1111 Data Science for Beginners?",
+        "ground_truth": (
+            "Apologise and explain module not found; suggest verifying code or AY; do not hallucinate."
+        ),
+    },
+    {
+        "id": 20,
+        "question": "What are the prerequisites for DSA4213?",
+        "ground_truth": (
+            "If undertaking an Undergraduate Degree THEN( must have completed MA2001 at a grade of at least D AND "
+            "must have completed 1 of MA2104/MA2311 at a grade of at least D AND must have completed 1 of ST2137 at a "
+            "grade of at least D, any Courses beginning with CS2040 at a grade of at least D)"
+        ),
+    },
+    {
+        "id": 21,
+        "question": "What is the timetable for DSA4213 like in Semester 1?",
+        "ground_truth": (
+            "Lecture 1: Every week from Week 1 to Week 13, on Fridays from 2:00 PM to 4:00 PM in UT-AUD2.\n"
+            "Lecture 1: Every week from Week 1 to Week 13, on Tuesdays from 5:00 PM to 7:00 PM in UT-AUD1."
+        ),
+    },
+]
 
 def _merge_history(existing: list[dict[str, str]], new: list[dict[str, str]]) -> list[dict[str, str]]:
     """Combine truncated API history with the full UI history."""
@@ -142,6 +304,132 @@ AVATARS = {
     "user": "🧑‍💻",
 }
 
+
+def _render_developer_payload(payload: dict) -> None:
+    """Display developer view metadata inside an expander stack."""
+
+    with st.expander("Model input", expanded=False):
+        st.json(payload.get("model_input", []))
+
+    stream_events = payload.get("stream_events", [])
+    if stream_events:
+        st.markdown("Stream trace")
+        for event_index, event in enumerate(stream_events, start=1):
+            label = event.get("type", f"event {event_index}")
+            with st.expander(f"Event {event_index}: {label}", expanded=False):
+                st.json(event)
+
+    router_decision = payload.get("router_decision")
+    retrieved_docs = payload.get("retrieved_docs")
+    if router_decision or retrieved_docs:
+        st.markdown("Retrieval summary")
+        if router_decision:
+            st.write(f"Router decision: **{router_decision}**")
+        if retrieved_docs:
+            with st.expander("Retrieved documents", expanded=False):
+                st.json(retrieved_docs)
+
+    grader_info = payload.get("grader")
+    if grader_info:
+        st.markdown("Grader details")
+        prompt_messages = grader_info.get("messages")
+        if prompt_messages:
+            with st.expander("Grader prompt", expanded=False):
+                st.json(prompt_messages)
+        parsed_scores = grader_info.get("parsed_scores")
+        if parsed_scores:
+            st.json(parsed_scores)
+        reasoning_traces = grader_info.get("reasoning_traces")
+        if reasoning_traces:
+            with st.expander("Reasoning traces", expanded=True):
+                if isinstance(reasoning_traces, (dict, list)):
+                    st.json(reasoning_traces)
+                else:
+                    st.code(str(reasoning_traces))
+        additional_kwargs = grader_info.get("additional_kwargs")
+        if additional_kwargs:
+            with st.expander("Additional kwargs", expanded=False):
+                st.json(additional_kwargs)
+        response_metadata = grader_info.get("response_metadata")
+        if response_metadata:
+            with st.expander("Response metadata", expanded=False):
+                st.json(response_metadata)
+        raw_response = grader_info.get("raw_response")
+        if raw_response:
+            st.code(raw_response, language="json")
+
+    with st.expander("Stored chat state", expanded=False):
+        st.json(payload.get("stored_state", []))
+
+    configuration = payload.get("configuration")
+    if configuration:
+        with st.expander("Ablation configuration", expanded=False):
+            st.json(configuration)
+
+
+def _render_evaluation_result(result: dict, *, index: int, developer_view: bool) -> None:
+    """Pretty-print a single evaluation outcome."""
+
+    question = result.get("question", "")
+    st.markdown(f"### Question {index}: {question}")
+
+    error_message = result.get("error")
+    if error_message:
+        st.error(error_message)
+        return
+
+    assistant_answer = result.get("answer", "")
+    st.markdown("**Assistant response**")
+    if assistant_answer:
+        st.markdown(assistant_answer)
+    else:
+        st.info("No response was returned by the assistant.")
+
+    ground_truth = result.get("ground_truth")
+    if ground_truth:
+        with st.expander("Ground truth reference", expanded=False):
+            st.write(ground_truth)
+
+    evaluation_meta = result.get("evaluation") or {}
+    if evaluation_meta:
+        _render_evaluation(evaluation_meta)
+
+        grader_prompt = evaluation_meta.get("grader_prompt")
+        if grader_prompt:
+            with st.expander("Grader prompt", expanded=False):
+                st.code(grader_prompt)
+
+        reasoning_traces = evaluation_meta.get("grader_reasoning")
+        if reasoning_traces is not None:
+            with st.expander("Grader reasoning trace", expanded=True):
+                if isinstance(reasoning_traces, (dict, list)):
+                    st.json(reasoning_traces)
+                else:
+                    st.code(str(reasoning_traces))
+    else:
+        st.warning("No grading information was returned for this question.")
+
+    if developer_view:
+        developer_payload = result.get("developer")
+        if developer_payload:
+            st.divider()
+            st.subheader("Developer details")
+            _render_developer_payload(developer_payload)
+
+
+def _render_evaluation_results(results: list[dict], *, developer_view: bool) -> None:
+    """Render the complete evaluation report in order."""
+
+    if not results:
+        st.info("Run the evaluation suite to see grading outcomes.")
+        return
+
+    for display_index, item in enumerate(results, start=1):
+        _render_evaluation_result(item, index=display_index, developer_view=developer_view)
+        if display_index != len(results):
+            st.divider()
+
+
 with st.sidebar:
     st.header("Session Controls")
     developer_view_enabled = st.toggle("Developer view", value=False, help="Show request and tool trace details.")
@@ -187,132 +475,186 @@ with st.sidebar:
         help="Leave blank to skip grading.",
     )
 
-for item in st.session_state.get("messages", []):
-    role = item.get("role", "assistant")
-    content = item.get("content", "")
-    avatar = AVATARS.get(role, "💬")
-    chat_role = role if role in ("user", "assistant") else "assistant"
-    with st.chat_message(chat_role, avatar=avatar):
-        st.markdown(content)
-        metadata = item.get("metadata") or {}
-        evaluation_meta = metadata.get("evaluation") if isinstance(metadata, dict) else None
-        if evaluation_meta:
-            _render_evaluation(evaluation_meta)
+chat_tab, evaluation_tab = st.tabs(["Chat", "Evaluation"])
 
-user_prompt = st.chat_input(
-    placeholder="e.g. What is the timetable for DSA4213 in semester 1?",
-)
+with chat_tab:
+    for item in st.session_state.get("messages", []):
+        role = item.get("role", "assistant")
+        content = item.get("content", "")
+        avatar = AVATARS.get(role, "💬")
+        chat_role = role if role in ("user", "assistant") else "assistant"
+        with st.chat_message(chat_role, avatar=avatar):
+            st.markdown(content)
+            metadata = item.get("metadata") or {}
+            evaluation_meta = metadata.get("evaluation") if isinstance(metadata, dict) else None
+            if evaluation_meta:
+                _render_evaluation(evaluation_meta)
 
-if user_prompt and user_prompt.strip():
-    user_prompt = user_prompt.strip()
-    st.session_state["messages"].append({"role": "user", "content": user_prompt})
-    with st.chat_message("user", avatar=AVATARS["user"]):
-        st.markdown(user_prompt)
+    user_prompt = st.chat_input(
+        placeholder="e.g. What is the timetable for DSA4213 in semester 1?",
+    )
 
-    with st.chat_message("assistant", avatar=ASSISTANT_AVATAR):
-        message_placeholder = st.empty()
-        message_placeholder.markdown(ASSISTANT_LOADING_HTML, unsafe_allow_html=True)
+    if user_prompt and user_prompt.strip():
+        user_prompt = user_prompt.strip()
+        st.session_state["messages"].append({"role": "user", "content": user_prompt})
+        with st.chat_message("user", avatar=AVATARS["user"]):
+            st.markdown(user_prompt)
+
+        with st.chat_message("assistant", avatar=ASSISTANT_AVATAR):
+            message_placeholder = st.empty()
+            message_placeholder.markdown(ASSISTANT_LOADING_HTML, unsafe_allow_html=True)
+            try:
+                response = requests.post(
+                    CHAT_ENDPOINT,
+                    json={
+                        "prompt": user_prompt,
+                        "developer_view": developer_view_enabled,
+                        "system_prompt_template": st.session_state["ablation_prompt_template"],
+                        "enable_reasoning": st.session_state["ablation_reasoning_enabled"],
+                        "enable_retriever": st.session_state["ablation_retriever_enabled"],
+                        "ground_truth": st.session_state.get("ground_truth_text", ""),
+                    },
+                    timeout=(10, 600),
+                )
+                response.raise_for_status()
+                data = response.json()
+                api_history = data.get("history", [])
+                st.session_state["messages"] = _merge_history(
+                    st.session_state.get("messages", []), api_history
+                )
+                developer_info = data.get("developer_view")
+                if developer_info:
+                    st.session_state["developer_payload"].append(developer_info)
+
+                assistant_reply = ""
+                last_assistant_message: dict[str, object] | None = None
+                for message in reversed(st.session_state["messages"]):
+                    if message.get("role") == "assistant":
+                        assistant_reply = message.get("content", "")
+                        last_assistant_message = message
+                        break
+                if not assistant_reply:
+                    assistant_reply = data.get("answer", "")
+                if assistant_reply:
+                    message_placeholder.markdown(assistant_reply)
+                else:
+                    message_placeholder.empty()
+                if last_assistant_message:
+                    metadata = last_assistant_message.get("metadata") or {}
+                    evaluation_meta = metadata.get("evaluation") if isinstance(metadata, dict) else None
+                    if evaluation_meta:
+                        _render_evaluation(evaluation_meta)
+            except requests.RequestException as exc:
+                error_message = f"Failed to contact the chatbot API: {exc}"
+                message_placeholder.markdown(error_message)
+                st.session_state["messages"].append({"role": "assistant", "content": error_message})
+
+    if developer_view_enabled and st.session_state.get("developer_payload"):
+        st.divider()
+        st.subheader("Developer details")
+        for index, payload in enumerate(st.session_state["developer_payload"], start=1):
+            st.markdown(f"**Interaction {index}**")
+            _render_developer_payload(payload)
+
+with evaluation_tab:
+    st.subheader("Evaluation harness")
+    st.caption(
+        "Runs the predefined evaluation questions using the current ablation settings and displays grading details."
+    )
+
+    run_evaluation = st.button(
+        "Run evaluation suite",
+        disabled=st.session_state["evaluation_running"],
+    )
+    if run_evaluation and not st.session_state["evaluation_running"]:
+        st.session_state["evaluation_results"] = []
+        st.session_state["evaluation_timeouts"] = []
+        st.session_state["evaluation_running"] = True
+
+    progress_placeholder = st.empty()
+    status_placeholder = st.empty()
+    results_placeholder = st.empty()
+
+    if st.session_state["evaluation_running"]:
+        total_questions = len(EVALUATION_QUESTIONS)
+        progress_bar = progress_placeholder.progress(0)
         try:
-            response = requests.post(
-                CHAT_ENDPOINT,
-                json={
-                    "prompt": user_prompt,
-                    "developer_view": developer_view_enabled,
-                    "system_prompt_template": st.session_state["ablation_prompt_template"],
-                    "enable_reasoning": st.session_state["ablation_reasoning_enabled"],
-                    "enable_retriever": st.session_state["ablation_retriever_enabled"],
-                    "ground_truth": st.session_state.get("ground_truth_text", ""),
-                },
-                timeout=(10, 600),
+            for index, item in enumerate(EVALUATION_QUESTIONS, start=1):
+                question = item.get("question", "")
+                ground_truth = item.get("ground_truth", "")
+                status_placeholder.info(
+                    f"Evaluating question {index}/{total_questions}: {question}"
+                )
+
+                result_entry: dict[str, object] = {
+                    "id": item.get("id"),
+                    "question": question,
+                    "ground_truth": ground_truth,
+                }
+
+                try:
+                    requests.post(RESET_ENDPOINT, timeout=10)
+                except requests.RequestException as exc:
+                    result_entry["error"] = (
+                        f"Failed to reset the conversation before evaluation: {exc}"
+                    )
+                else:
+                    try:
+                        response = requests.post(
+                            CHAT_ENDPOINT,
+                            json={
+                                "prompt": question,
+                                "developer_view": developer_view_enabled,
+                                "system_prompt_template": st.session_state["ablation_prompt_template"],
+                                "enable_reasoning": st.session_state["ablation_reasoning_enabled"],
+                                "enable_retriever": st.session_state["ablation_retriever_enabled"],
+                                "ground_truth": ground_truth,
+                            },
+                            timeout=(10, 600),
+                        )
+                        response.raise_for_status()
+                        data = response.json()
+                        result_entry["answer"] = data.get("answer", "")
+                        result_entry["evaluation"] = data.get("evaluation") or {}
+                        developer_info = data.get("developer_view")
+                        if developer_info:
+                            result_entry["developer"] = developer_info
+                    except requests.Timeout:
+                        timeout_message = (
+                            f"API request timed out for question {item.get('id')}: {question}"
+                        )
+                        result_entry["error"] = timeout_message
+                        st.session_state["evaluation_timeouts"].append(timeout_message)
+                    except requests.RequestException as exc:
+                        result_entry["error"] = f"Failed to evaluate question: {exc}"
+                    except ValueError as exc:
+                        result_entry["error"] = f"Invalid JSON response: {exc}"
+
+                st.session_state["evaluation_results"].append(result_entry)
+
+                progress_bar.progress(index / total_questions)
+                results_placeholder.empty()
+                with results_placeholder.container():
+                    _render_evaluation_results(
+                        st.session_state["evaluation_results"],
+                        developer_view=developer_view_enabled,
+                    )
+
+            status_placeholder.success("Evaluation suite completed.")
+        finally:
+            st.session_state["evaluation_running"] = False
+            progress_bar.progress(1.0)
+    else:
+        with results_placeholder.container():
+            _render_evaluation_results(
+                st.session_state.get("evaluation_results", []),
+                developer_view=developer_view_enabled,
             )
-            response.raise_for_status()
-            data = response.json()
-            api_history = data.get("history", [])
-            st.session_state["messages"] = _merge_history(
-                st.session_state.get("messages", []), api_history
-            )
-            developer_info = data.get("developer_view")
-            if developer_info:
-                st.session_state["developer_payload"].append(developer_info)
 
-            assistant_reply = ""
-            last_assistant_message: dict[str, object] | None = None
-            for message in reversed(st.session_state["messages"]):
-                if message.get("role") == "assistant":
-                    assistant_reply = message.get("content", "")
-                    last_assistant_message = message
-                    break
-            if not assistant_reply:
-                assistant_reply = data.get("answer", "")
-            if assistant_reply:
-                message_placeholder.markdown(assistant_reply)
-            else:
-                message_placeholder.empty()
-            if last_assistant_message:
-                metadata = last_assistant_message.get("metadata") or {}
-                evaluation_meta = metadata.get("evaluation") if isinstance(metadata, dict) else None
-                if evaluation_meta:
-                    _render_evaluation(evaluation_meta)
-        except requests.RequestException as exc:
-            error_message = f"Failed to contact the chatbot API: {exc}"
-            message_placeholder.markdown(error_message)
-            st.session_state["messages"].append({"role": "assistant", "content": error_message})
-
-
-if developer_view_enabled and st.session_state.get("developer_payload"):
-    st.divider()
-    st.subheader("Developer details")
-    for index, payload in enumerate(st.session_state["developer_payload"], start=1):
-        st.markdown(f"**Interaction {index}**")
-        with st.expander("Model input", expanded=False):
-            st.json(payload.get("model_input", []))
-        stream_events = payload.get("stream_events", [])
-        if stream_events:
-            st.markdown("Stream trace")
-            for event_index, event in enumerate(stream_events, start=1):
-                label = event.get("type", f"event {event_index}")
-                with st.expander(f"Event {event_index}: {label}", expanded=False):
-                    st.json(event)
-        router_decision = payload.get("router_decision")
-        retrieved_docs = payload.get("retrieved_docs")
-        if router_decision or retrieved_docs:
-            st.markdown("Retrieval summary")
-            if router_decision:
-                st.write(f"Router decision: **{router_decision}**")
-            if retrieved_docs:
-                with st.expander("Retrieved documents", expanded=False):
-                    st.json(retrieved_docs)
-        grader_info = payload.get("grader")
-        if grader_info:
-            st.markdown("Grader details")
-            prompt_messages = grader_info.get("messages")
-            if prompt_messages:
-                with st.expander("Grader prompt", expanded=False):
-                    st.json(prompt_messages)
-            parsed_scores = grader_info.get("parsed_scores")
-            if parsed_scores:
-                st.json(parsed_scores)
-            reasoning_traces = grader_info.get("reasoning_traces")
-            if reasoning_traces:
-                with st.expander("Reasoning traces", expanded=True):
-                    if isinstance(reasoning_traces, (dict, list)):
-                        st.json(reasoning_traces)
-                    else:
-                        st.code(str(reasoning_traces))
-            additional_kwargs = grader_info.get("additional_kwargs")
-            if additional_kwargs:
-                with st.expander("Additional kwargs", expanded=False):
-                    st.json(additional_kwargs)
-            response_metadata = grader_info.get("response_metadata")
-            if response_metadata:
-                with st.expander("Response metadata", expanded=False):
-                    st.json(response_metadata)
-            raw_response = grader_info.get("raw_response")
-            if raw_response:
-                st.code(raw_response, language="json")
-        with st.expander("Stored chat state", expanded=False):
-            st.json(payload.get("stored_state", []))
-        configuration = payload.get("configuration")
-        if configuration:
-            with st.expander("Ablation configuration", expanded=False):
-                st.json(configuration)
+    if st.session_state.get("evaluation_timeouts"):
+        timeout_list = "\n".join(
+            f"- {message}" for message in st.session_state["evaluation_timeouts"]
+        )
+        st.warning(
+            "One or more questions exceeded the API timeout:\n" + timeout_list
+        )

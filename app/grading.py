@@ -169,7 +169,7 @@ class ResponseGrader:
             HumanMessage(content=user_prompt),
         ]
 
-        evaluation: Dict[str, Any] = {}
+        evaluation: Dict[str, Any] = {"grader_prompt": user_prompt}
         developer_payload: Optional[Dict[str, Any]] = None
 
         try:
@@ -187,6 +187,14 @@ class ResponseGrader:
             return GradePayload(evaluation=evaluation, developer=developer_payload)
 
         raw_text = response.content.strip()
+        raw_additional_kwargs = getattr(response, "additional_kwargs", {})
+        raw_reasoning: Any | None = None
+        if isinstance(raw_additional_kwargs, dict):
+            for key in ("reasoning", "reasoning_content", "thoughts"):
+                if key in raw_additional_kwargs:
+                    raw_reasoning = raw_additional_kwargs[key]
+                    break
+
         scores, score_error, parsed_json = _parse_scores(raw_text)
         if scores:
             evaluation["scores"] = scores
@@ -194,6 +202,9 @@ class ResponseGrader:
 
         if score_error and "error" not in evaluation:
             evaluation["error"] = score_error
+
+        if raw_reasoning is not None:
+            evaluation["grader_reasoning"] = _safe_json(raw_reasoning)
 
         if developer_view:
             developer_payload = {
@@ -209,7 +220,7 @@ class ResponseGrader:
                     "error": score_error,
                 },
                 "response_metadata": _safe_json(getattr(response, "response_metadata", {})),
-                "additional_kwargs": _safe_json(getattr(response, "additional_kwargs", {})),
+                "additional_kwargs": _safe_json(raw_additional_kwargs),
             }
             reasoning_traces = None
             additional = developer_payload["additional_kwargs"]

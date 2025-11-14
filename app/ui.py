@@ -113,8 +113,8 @@ EVALUATION_QUESTIONS = [
         "id": 3,
         "question": "Do I have to do a specialisation in DSA to graduate?",
         "ground_truth": (
-            "No, specialisations are optional. Must reference Operations Research and Statistical "
-            "Methodology."
+            "No, specialisations are optional; Answer should mention Operations Research and Statistical "
+            "Methodology as the optional specialisations."
         ),
     },
     {
@@ -884,6 +884,14 @@ with test_grader_tab:
         evaluation_payload = test_grader_result.get("evaluation") or {}
         if evaluation_payload:
             _render_evaluation(evaluation_payload)
+
+            reasoning_traces = evaluation_payload.get("grader_reasoning")
+            if reasoning_traces is not None:
+                with st.expander("Grader reasoning trace", expanded=True):
+                    if isinstance(reasoning_traces, (dict, list)):
+                        st.json(reasoning_traces)
+                    else:
+                        st.code(str(reasoning_traces))
         else:
             st.info("The grader did not return a score for this response.")
 

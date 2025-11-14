@@ -7,3 +7,7 @@ __pycache__/
 
 # csv files in /app
 /app/**/*.csv
+
+# excel files in /app
+/app/**/*.xlsx
+

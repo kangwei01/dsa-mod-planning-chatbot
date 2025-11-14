@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import csv
 import json
 import os
 import sys
@@ -10,6 +9,7 @@ from pathlib import Path
 
 import requests
 import streamlit as st
+from openpyxl import Workbook, load_workbook
 
 if __package__ in (None, ""):
     sys.path.append(str(Path(__file__).resolve().parent.parent))
@@ -20,6 +20,7 @@ else:
 API_ROOT = os.getenv("CHATBOT_API_ROOT", "http://localhost:5000/api")
 CHAT_ENDPOINT = f"{API_ROOT}/chat"
 RESET_ENDPOINT = f"{API_ROOT}/reset"
+GRADE_ENDPOINT = f"{API_ROOT}/grade-response"
 
 st.set_page_config(page_title="DSA Planning Chatbot", page_icon="🧭")
 st.title("DSA Planning Chatbot")
@@ -43,6 +44,10 @@ if "evaluation_running" not in st.session_state:
     st.session_state["evaluation_running"] = False
 if "evaluation_timeouts" not in st.session_state:
     st.session_state["evaluation_timeouts"] = []
+if "test_grader_result" not in st.session_state:
+    st.session_state["test_grader_result"] = None
+if "test_grader_error" not in st.session_state:
+    st.session_state["test_grader_error"] = ""
 
 st.markdown(
     """
@@ -247,16 +252,16 @@ EVALUATION_QUESTIONS = [
 ]
 
 
-def _current_ablation_csv_name(*, reasoning_enabled: bool, retriever_enabled: bool) -> str:
-    """Return the CSV filename for the active ablation configuration."""
+def _current_ablation_sheet_name(*, reasoning_enabled: bool, retriever_enabled: bool) -> str:
+    """Return the worksheet name for the active ablation configuration."""
 
     reasoning_flag = "reasoning_on" if reasoning_enabled else "reasoning_off"
     retriever_flag = "retriever_on" if retriever_enabled else "retriever_off"
-    return f"{reasoning_flag}_{retriever_flag}.csv"
+    return f"{reasoning_flag}_{retriever_flag}"
 
 
 def _serialise_reasoning_trace(value: object) -> str:
-    """Convert the grader reasoning trace into a CSV-friendly string."""
+    """Convert the grader reasoning trace into a spreadsheet-friendly string."""
 
     if value is None:
         return ""
@@ -268,18 +273,25 @@ def _serialise_reasoning_trace(value: object) -> str:
     return str(value)
 
 
+def _evaluation_workbook_path() -> Path:
+    """Return the path to the shared evaluation workbook."""
+
+    return Path(__file__).resolve().parent / "evaluation_results.xlsx"
+
+
 def _write_evaluation_csv(
     results: list[dict],
     *,
     reasoning_enabled: bool,
     retriever_enabled: bool,
-) -> Path | None:
-    """Export evaluation outcomes to a configuration-specific CSV file."""
+) -> tuple[Path, str] | None:
+    """Export evaluation outcomes to a shared workbook with per-ablation sheets."""
 
     if not results:
         return None
 
-    csv_path = Path(__file__).resolve().parent / _current_ablation_csv_name(
+    workbook_path = _evaluation_workbook_path()
+    sheet_name = _current_ablation_sheet_name(
         reasoning_enabled=reasoning_enabled,
         retriever_enabled=retriever_enabled,
     )
@@ -316,12 +328,26 @@ def _write_evaluation_csv(
             }
         )
 
-    with csv_path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
+    try:
+        workbook = load_workbook(workbook_path)
+    except FileNotFoundError:
+        workbook = Workbook()
+        default_sheet = workbook.active
+        if default_sheet is not None:
+            workbook.remove(default_sheet)
 
-    return csv_path
+    if sheet_name in workbook.sheetnames:
+        worksheet = workbook[sheet_name]
+        workbook.remove(worksheet)
+
+    worksheet = workbook.create_sheet(title=sheet_name)
+    worksheet.append(fieldnames)
+    for row in rows:
+        worksheet.append([row.get(column) for column in fieldnames])
+
+    workbook.save(workbook_path)
+
+    return workbook_path, sheet_name
 
 
 def _merge_history(existing: list[dict[str, str]], new: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -559,7 +585,7 @@ with st.sidebar:
         help="Leave blank to skip grading.",
     )
 
-chat_tab, evaluation_tab = st.tabs(["Chat", "Evaluation"])
+chat_tab, evaluation_tab, test_grader_tab = st.tabs(["Chat", "Evaluation", "Test grader"])
 
 with chat_tab:
     for item in st.session_state.get("messages", []):
@@ -737,19 +763,21 @@ with evaluation_tab:
                     )
 
             try:
-                csv_path = _write_evaluation_csv(
+                workbook_info = _write_evaluation_csv(
                     st.session_state["evaluation_results"],
                     reasoning_enabled=st.session_state["ablation_reasoning_enabled"],
                     retriever_enabled=st.session_state["ablation_retriever_enabled"],
                 )
             except OSError as exc:
                 status_placeholder.warning(
-                    f"Evaluation suite completed but could not write CSV: {exc}"
+                    f"Evaluation suite completed but could not write workbook: {exc}"
                 )
             else:
-                if csv_path is not None:
+                if workbook_info is not None:
+                    workbook_path, sheet_name = workbook_info
                     status_placeholder.success(
-                        f"Evaluation suite completed. Results saved to {csv_path.name}."
+                        "Evaluation suite completed. Results saved to "
+                        f"{workbook_path.name} (sheet: {sheet_name})."
                     )
                 else:
                     status_placeholder.success("Evaluation suite completed.")
@@ -770,3 +798,99 @@ with evaluation_tab:
         st.warning(
             "One or more questions exceeded the API timeout:\n" + timeout_list
         )
+
+with test_grader_tab:
+    st.subheader("Test grader")
+    st.caption(
+        "Manually provide a question, ground truth answer, and assistant response to run the grading pipeline."
+    )
+
+    question_input = st.text_area(
+        "Question",
+        key="test_grader_question",
+        placeholder="Enter the question you want the assistant graded against.",
+    )
+    ground_truth_input = st.text_area(
+        "Ground truth",
+        key="test_grader_ground_truth",
+        placeholder="Provide the authoritative answer or rubric for grading.",
+        height=150,
+    )
+    assistant_response_input = st.text_area(
+        "Assistant response",
+        key="test_grader_answer",
+        placeholder="Paste the assistant's response to be graded.",
+        height=200,
+    )
+    developer_view_requested = st.checkbox(
+        "Show developer details for the grader",
+        key="test_grader_developer_view",
+    )
+
+    if st.button("Grade response", key="grade_response_button"):
+        if not question_input.strip():
+            st.session_state["test_grader_error"] = "Question is required for grading."
+            st.session_state["test_grader_result"] = None
+        elif not ground_truth_input.strip():
+            st.session_state["test_grader_error"] = "Ground truth is required for grading."
+            st.session_state["test_grader_result"] = None
+        elif not assistant_response_input.strip():
+            st.session_state["test_grader_error"] = "Assistant response is required for grading."
+            st.session_state["test_grader_result"] = None
+        else:
+            try:
+                response = requests.post(
+                    GRADE_ENDPOINT,
+                    json={
+                        "question": question_input,
+                        "ground_truth": ground_truth_input,
+                        "answer": assistant_response_input,
+                        "developer_view": developer_view_requested,
+                    },
+                    timeout=120,
+                )
+                response.raise_for_status()
+            except requests.RequestException as exc:
+                st.session_state["test_grader_error"] = (
+                    f"Failed to grade the response: {exc}"
+                )
+                st.session_state["test_grader_result"] = None
+            else:
+                try:
+                    data = response.json()
+                except ValueError as exc:
+                    st.session_state["test_grader_error"] = (
+                        f"Invalid JSON response from grader: {exc}"
+                    )
+                    st.session_state["test_grader_result"] = None
+                else:
+                    api_error = data.get("error")
+                    if api_error:
+                        st.session_state["test_grader_error"] = str(api_error)
+                        st.session_state["test_grader_result"] = None
+                    else:
+                        st.session_state["test_grader_error"] = ""
+                        st.session_state["test_grader_result"] = {
+                            "evaluation": data.get("evaluation") or {},
+                            "developer": data.get("developer_view"),
+                            "developer_view_enabled": developer_view_requested,
+                        }
+
+    if st.session_state.get("test_grader_error"):
+        st.error(st.session_state["test_grader_error"])
+
+    test_grader_result = st.session_state.get("test_grader_result")
+    if test_grader_result:
+        evaluation_payload = test_grader_result.get("evaluation") or {}
+        if evaluation_payload:
+            _render_evaluation(evaluation_payload)
+        else:
+            st.info("The grader did not return a score for this response.")
+
+        if (
+            test_grader_result.get("developer_view_enabled")
+            and test_grader_result.get("developer")
+        ):
+            st.divider()
+            st.subheader("Grader developer details")
+            _render_developer_payload(test_grader_result["developer"])

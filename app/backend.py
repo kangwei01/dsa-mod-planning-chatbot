@@ -103,6 +103,37 @@ def chat():
     return jsonify(body)
 
 
+@app.post("/api/grade-response")
+def grade_response():
+    """Grade a user-provided response without invoking the chat agent."""
+
+    payload = request.get_json(silent=True) or {}
+    question = (payload.get("question") or "").strip()
+    ground_truth = (payload.get("ground_truth") or "").strip()
+    answer = (payload.get("answer") or "").strip()
+    developer_view = bool(payload.get("developer_view"))
+
+    if not question:
+        return jsonify({"error": "question is required"}), 400
+    if not ground_truth:
+        return jsonify({"error": "ground_truth is required"}), 400
+    if not answer:
+        return jsonify({"error": "answer is required"}), 400
+
+    grade_payload = grader_service.grade(
+        question=question,
+        ground_truth=ground_truth,
+        answer=answer,
+        developer_view=developer_view,
+    )
+
+    body = {"evaluation": grade_payload.evaluation}
+    if developer_view and grade_payload.developer is not None:
+        body["developer_view"] = grade_payload.developer
+
+    return jsonify(body)
+
+
 @app.post("/api/evaluate")
 def evaluate():
     """Run an evaluation sweep over a batch of prompts with isolated state."""

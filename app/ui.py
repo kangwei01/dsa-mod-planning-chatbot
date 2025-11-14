@@ -30,8 +30,8 @@ if "messages" not in st.session_state:
     st.session_state["messages"] = []
 if "developer_payload" not in st.session_state:
     st.session_state["developer_payload"] = []
-if "ablation_prompt_template" not in st.session_state:
-    st.session_state["ablation_prompt_template"] = DEFAULT_SYSTEM_PROMPT_TEMPLATE
+if "ablation_prompt_guardrails_removed" not in st.session_state:
+    st.session_state["ablation_prompt_guardrails_removed"] = False
 if "ablation_reasoning_enabled" not in st.session_state:
     st.session_state["ablation_reasoning_enabled"] = False
 if "ablation_retriever_enabled" not in st.session_state:
@@ -94,6 +94,15 @@ ASSISTANT_LOADING_HTML = (
     "<span class=\"dot\"></span>"
     "</div>"
 )
+
+PROMPT_GUARDRAIL_FREE_SYSTEM_PROMPT = (
+    "You are an academic planning assistant for the NUS Data Science & Analytics major.\n"
+    "Always review the full chat history so follow-up questions stay consistent.\n"
+    "Use a private chain-of-thought to break complex requests into sub-questions, plan the tool-call sequence, and call multiple tools when needed before answering.\n"
+    "Ground every module fact in the provided NUSMods API tools and cross-check conflicting data.\n"
+    "If external information have been retrieved, make use of those information."
+)
+
 
 EVALUATION_QUESTIONS = [
     {
@@ -252,12 +261,41 @@ EVALUATION_QUESTIONS = [
 ]
 
 
-def _current_ablation_sheet_name(*, reasoning_enabled: bool, retriever_enabled: bool) -> str:
+PROMPT_GUARDRAIL_EVALUATION_IDS = {17, 18, 19}
+
+
+def _current_system_prompt_template() -> str:
+    """Return the active system prompt based on the ablation toggle."""
+
+    if st.session_state.get("ablation_prompt_guardrails_removed"):
+        return PROMPT_GUARDRAIL_FREE_SYSTEM_PROMPT
+    return DEFAULT_SYSTEM_PROMPT_TEMPLATE
+
+
+def _active_evaluation_questions() -> list[dict]:
+    """Return the evaluation questions for the current ablation settings."""
+
+    if st.session_state.get("ablation_prompt_guardrails_removed"):
+        return [
+            item
+            for item in EVALUATION_QUESTIONS
+            if item.get("id") in PROMPT_GUARDRAIL_EVALUATION_IDS
+        ]
+    return list(EVALUATION_QUESTIONS)
+
+
+def _current_ablation_sheet_name(
+    *,
+    reasoning_enabled: bool,
+    retriever_enabled: bool,
+    guardrails_removed: bool,
+) -> str:
     """Return the worksheet name for the active ablation configuration."""
 
-    reasoning_flag = "reasoning_on" if reasoning_enabled else "reasoning_off"
-    retriever_flag = "retriever_on" if retriever_enabled else "retriever_off"
-    return f"{reasoning_flag}_{retriever_flag}"
+    guardrail_flag = "PGoff" if guardrails_removed else "PGon"
+    reasoning_flag = "RSon" if reasoning_enabled else "RSoff"
+    retriever_flag = "RTon" if retriever_enabled else "RToff"
+    return f"{guardrail_flag}_{reasoning_flag}_{retriever_flag}"
 
 
 def _serialise_reasoning_trace(value: object) -> str:
@@ -284,6 +322,7 @@ def _write_evaluation_csv(
     *,
     reasoning_enabled: bool,
     retriever_enabled: bool,
+    guardrails_removed: bool,
 ) -> tuple[Path, str] | None:
     """Export evaluation outcomes to a shared workbook with per-ablation sheets."""
 
@@ -294,6 +333,7 @@ def _write_evaluation_csv(
     sheet_name = _current_ablation_sheet_name(
         reasoning_enabled=reasoning_enabled,
         retriever_enabled=retriever_enabled,
+        guardrails_removed=guardrails_removed,
     )
 
     fieldnames = [
@@ -556,10 +596,13 @@ with st.sidebar:
     st.divider()
     st.header("Ablation controls")
     st.caption("Adjust the assistant configuration for quick ablation studies.")
-    st.text_area(
-        "Assistant system prompt",
-        key="ablation_prompt_template",
-        height=220,
+    st.toggle(
+        "Remove assistant prompt guardrails",
+        key="ablation_prompt_guardrails_removed",
+        help=(
+            "Use a minimal system prompt focused on tool grounding when enabled."
+            " Disable to restore the default assistant prompt."
+        ),
     )
     st.toggle(
         "Enable Qwen reasoning",
@@ -623,7 +666,7 @@ with chat_tab:
                     json={
                         "prompt": user_prompt,
                         "developer_view": developer_view_enabled,
-                        "system_prompt_template": st.session_state["ablation_prompt_template"],
+                        "system_prompt_template": _current_system_prompt_template(),
                         "enable_reasoning": st.session_state["ablation_reasoning_enabled"],
                         "enable_retriever": st.session_state["ablation_retriever_enabled"],
                         "ground_truth": st.session_state.get("ground_truth_text", ""),
@@ -691,82 +734,108 @@ with evaluation_tab:
         st.session_state["evaluation_results"] = []
         st.session_state["evaluation_timeouts"] = []
         st.session_state["evaluation_running"] = True
+        st.session_state["evaluation_questions_queue"] = list(
+            _active_evaluation_questions()
+        )
+        st.session_state["evaluation_system_prompt_template"] = (
+            _current_system_prompt_template()
+        )
+        st.session_state["evaluation_prompt_guardrails_removed"] = st.session_state[
+            "ablation_prompt_guardrails_removed"
+        ]
 
     progress_placeholder = st.empty()
     status_placeholder = st.empty()
     results_placeholder = st.empty()
 
     if st.session_state["evaluation_running"]:
-        total_questions = len(EVALUATION_QUESTIONS)
-        progress_bar = progress_placeholder.progress(0)
-        try:
-            for index, item in enumerate(EVALUATION_QUESTIONS, start=1):
-                question = item.get("question", "")
-                ground_truth = item.get("ground_truth", "")
-                status_placeholder.info(
-                    f"Evaluating question {index}/{total_questions}: {question}"
-                )
-
-                result_entry: dict[str, object] = {
-                    "id": item.get("id"),
-                    "question": question,
-                    "ground_truth": ground_truth,
-                }
-
-                try:
-                    requests.post(RESET_ENDPOINT, timeout=10)
-                except requests.RequestException as exc:
-                    result_entry["error"] = (
-                        f"Failed to reset the conversation before evaluation: {exc}"
+        active_questions = st.session_state.get("evaluation_questions_queue") or []
+        total_questions = len(active_questions)
+        if total_questions == 0:
+            status_placeholder.warning(
+                "No evaluation questions are configured for the current ablation settings."
+            )
+            st.session_state["evaluation_running"] = False
+            results_placeholder.empty()
+        else:
+            progress_bar = progress_placeholder.progress(0)
+            system_prompt_template = st.session_state.get(
+                "evaluation_system_prompt_template", _current_system_prompt_template()
+            )
+            try:
+                for index, item in enumerate(active_questions, start=1):
+                    question = item.get("question", "")
+                    ground_truth = item.get("ground_truth", "")
+                    status_placeholder.info(
+                        f"Evaluating question {index}/{total_questions}: {question}"
                     )
-                else:
+
+                    result_entry: dict[str, object] = {
+                        "id": item.get("id"),
+                        "question": question,
+                        "ground_truth": ground_truth,
+                    }
+
                     try:
-                        response = requests.post(
-                            CHAT_ENDPOINT,
-                            json={
-                                "prompt": question,
-                                "developer_view": developer_view_enabled,
-                                "system_prompt_template": st.session_state["ablation_prompt_template"],
-                                "enable_reasoning": st.session_state["ablation_reasoning_enabled"],
-                                "enable_retriever": st.session_state["ablation_retriever_enabled"],
-                                "ground_truth": ground_truth,
-                            },
-                            timeout=(10, 600),
-                        )
-                        response.raise_for_status()
-                        data = response.json()
-                        result_entry["answer"] = data.get("answer", "")
-                        result_entry["response_time"] = data.get("response_time")
-                        result_entry["evaluation"] = data.get("evaluation") or {}
-                        developer_info = data.get("developer_view")
-                        if developer_info:
-                            result_entry["developer"] = developer_info
-                    except requests.Timeout:
-                        timeout_message = (
-                            f"API request timed out for question {item.get('id')}: {question}"
-                        )
-                        result_entry["error"] = timeout_message
-                        st.session_state["evaluation_timeouts"].append(timeout_message)
+                        requests.post(RESET_ENDPOINT, timeout=10)
                     except requests.RequestException as exc:
-                        result_entry["error"] = f"Failed to evaluate question: {exc}"
-                    except ValueError as exc:
-                        result_entry["error"] = f"Invalid JSON response: {exc}"
+                        result_entry["error"] = (
+                            f"Failed to reset the conversation before evaluation: {exc}"
+                        )
+                    else:
+                        try:
+                            response = requests.post(
+                                CHAT_ENDPOINT,
+                                json={
+                                    "prompt": question,
+                                    "developer_view": developer_view_enabled,
+                                    "system_prompt_template": system_prompt_template,
+                                    "enable_reasoning": st.session_state["ablation_reasoning_enabled"],
+                                    "enable_retriever": st.session_state["ablation_retriever_enabled"],
+                                    "ground_truth": ground_truth,
+                                },
+                                timeout=(10, 600),
+                            )
+                            response.raise_for_status()
+                            data = response.json()
+                            result_entry["answer"] = data.get("answer", "")
+                            result_entry["response_time"] = data.get("response_time")
+                            result_entry["evaluation"] = data.get("evaluation") or {}
+                            developer_info = data.get("developer_view")
+                            if developer_info:
+                                result_entry["developer"] = developer_info
+                        except requests.Timeout:
+                            timeout_message = (
+                                f"API request timed out for question {item.get('id')}: {question}"
+                            )
+                            result_entry["error"] = timeout_message
+                            st.session_state["evaluation_timeouts"].append(timeout_message)
+                        except requests.RequestException as exc:
+                            result_entry["error"] = f"Failed to evaluate question: {exc}"
+                        except ValueError as exc:
+                            result_entry["error"] = f"Invalid JSON response: {exc}"
 
-                st.session_state["evaluation_results"].append(result_entry)
+                    st.session_state["evaluation_results"].append(result_entry)
 
-                progress_bar.progress(index / total_questions)
-                results_placeholder.empty()
-                with results_placeholder.container():
-                    _render_evaluation_results(
-                        st.session_state["evaluation_results"],
-                        developer_view=developer_view_enabled,
-                    )
+                    progress_bar.progress(index / total_questions)
+                    results_placeholder.empty()
+                    with results_placeholder.container():
+                        _render_evaluation_results(
+                            st.session_state["evaluation_results"],
+                            developer_view=developer_view_enabled,
+                        )
+            finally:
+                st.session_state["evaluation_running"] = False
+                progress_bar.progress(1.0)
 
             try:
                 workbook_info = _write_evaluation_csv(
                     st.session_state["evaluation_results"],
                     reasoning_enabled=st.session_state["ablation_reasoning_enabled"],
                     retriever_enabled=st.session_state["ablation_retriever_enabled"],
+                    guardrails_removed=st.session_state.get(
+                        "evaluation_prompt_guardrails_removed", False
+                    ),
                 )
             except OSError as exc:
                 status_placeholder.warning(
@@ -781,9 +850,6 @@ with evaluation_tab:
                     )
                 else:
                     status_placeholder.success("Evaluation suite completed.")
-        finally:
-            st.session_state["evaluation_running"] = False
-            progress_bar.progress(1.0)
     else:
         with results_placeholder.container():
             _render_evaluation_results(

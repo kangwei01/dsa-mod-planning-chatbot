@@ -12,9 +12,11 @@ from .chat_graph import (
     ChatService,
     DEFAULT_SYSTEM_PROMPT_TEMPLATE,
 )
+from .grading import ResponseGrader
 
 # Single shared instance keeps the conversation in memory for demo purposes.
 chat_service = ChatService()
+grader_service = ResponseGrader()
 
 app = Flask(__name__)
 
@@ -50,6 +52,7 @@ def chat():
     system_prompt_template = payload.get("system_prompt_template")
     reasoning_enabled = payload.get("enable_reasoning")
     retriever_enabled = payload.get("enable_retriever")
+    ground_truth = (payload.get("ground_truth") or "").strip()
     chat_service.configure(
         system_prompt_template=system_prompt_template or DEFAULT_SYSTEM_PROMPT_TEMPLATE,
         reasoning_enabled=reasoning_enabled,
@@ -65,6 +68,26 @@ def chat():
     }
     if response.developer_view is not None:
         body["developer_view"] = response.developer_view
+
+    if ground_truth:
+        grade_payload = grader_service.grade(
+            question=prompt,
+            ground_truth=ground_truth,
+            answer=response.answer,
+            developer_view=developer_view,
+        )
+        evaluation = grade_payload.evaluation
+        if evaluation:
+            body["evaluation"] = evaluation
+            for message in reversed(body.get("history", [])):
+                if message.get("role") == "assistant":
+                    metadata = message.setdefault("metadata", {})
+                    if isinstance(metadata, dict):
+                        metadata["evaluation"] = evaluation
+                    break
+        if developer_view and grade_payload.developer is not None:
+            body.setdefault("developer_view", {})["grader"] = grade_payload.developer
+
     return jsonify(body)
 
 

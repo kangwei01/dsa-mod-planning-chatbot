@@ -63,6 +63,3 @@ Set the `CHATBOT_API_ROOT` environment variable before starting Streamlit if the
 - Install Ollama and pull the required models (`mxbai-embed-large` for embeddings and a chat model such as `qwen3:14b`) before starting the backend.
 - Run `python -m app.build_vectors` whenever the requirement source files change so the FAISS artefacts stay in sync.
 - Use the `/api/grade-response` endpoint or the Streamlit grading controls to benchmark different model configurations.
-
-## License
-This repository is provided for educational use. Consult your organisation's policies before redistributing or deploying it in production settings.

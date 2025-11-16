@@ -41,7 +41,6 @@ Set the `CHATBOT_API_ROOT` environment variable before starting Streamlit if the
 ├── evaluation_results.xlsx — Testing log of 21 evaluation questions captured from the grading workflow.
 └── app/
     ├── __init__.py — Marks the directory as a package for `python -m app.*` execution.
-    ├── README.md — Additional quick-start notes for the application package.
     ├── backend.py — Flask application exposing chat, grading, and evaluation REST endpoints.
     ├── build_vectors.py — Regenerates the FAISS vector store from the source requirement documents.
     ├── chat_graph.py — LangGraph orchestration, chat state handling, and response serialisation.

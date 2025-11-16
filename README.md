@@ -37,8 +37,8 @@ Set the `CHATBOT_API_ROOT` environment variable before starting Streamlit if the
 ## Repository map
 ```
 .
-├── README.md — Project overview, setup instructions, and repository map (this file).
-├── evaluation_results.xlsx — Sample evaluation log captured from the grading workflow.
+├── README.md — Project overview, setup instructions, and repository map.
+├── evaluation_results.xlsx — Testing log of 21 evaluation questions captured from the grading workflow.
 └── app/
     ├── __init__.py — Marks the directory as a package for `python -m app.*` execution.
     ├── README.md — Additional quick-start notes for the application package.
@@ -52,10 +52,10 @@ Set the `CHATBOT_API_ROOT` environment variable before starting Streamlit if the
     ├── ui.py — Streamlit interface for interacting with the chatbot and grading workflows.
     ├── requirements.txt — Python dependencies shared by the backend and UI components.
     ├── all_requirements_vectors/
-    │   ├── index.faiss — Persisted FAISS index for similarity search.
+    │   ├── index.faiss — FAISS index for similarity search.
     │   └── index.pkl — Serialized metadata accompanying the FAISS index.
     └── data/
-        ├── dsa_chs_requirements.json — Structured CHS/DSA requirement data used for embedding.
+        ├── dsa_chs_requirements.json — Structured CHS requirement data used for embedding.
         └── dsa_requirements.md — Markdown representation of DSA requirements for retrieval.
 ```
 

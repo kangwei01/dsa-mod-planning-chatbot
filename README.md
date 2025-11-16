@@ -1,6 +1,6 @@
 # DSA Planning Chatbot
 
-The DSA Planning Chatbot helps prospective students explore National University of Singapore (NUS) Data Science & Analytics (DSA) degree requirements. It combines a LangGraph-powered assistant, a Flask REST API, and a Streamlit interface so the complete planning workflow is available from this repository.
+The DSA Planning Chatbot was created as a project for DSA4213 Natural Language Processing for Data Science to help prospective students explore National University of Singapore (NUS) Data Science & Analytics (DSA) degree requirements. It combines a LangGraph-powered assistant, a Flask REST API, and a Streamlit interface so the complete planning workflow is available from this repository.
 
 ## Highlights
 - **Conversational planner** – LangGraph coordinates tool calls, retrieval, and response generation to guide students through multi-turn planning conversations.
